@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 
 const TEAM_ID = "zotomic-com-5624s-projects";
-const PROJECT = "freedownloder";
+const PROJECT = "mkservice";
 const WEB_DIR = path.join(__dirname, "..", "web");
 
 const FILES = ["index.html", "style.css", "app.js", "auth.js", "config.js", "admin.html", "admin.js"];

@@ -28,7 +28,9 @@ app.use(express.static(path.join(__dirname, "web")));
 
 /* In public mode the API is called from the Vercel-hosted frontend */
 if (MODE === "public") {
-  app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*", credentials: false }));
+  // ALLOWED_ORIGIN may be a comma-separated list of allowed frontend origins
+  const origins = (process.env.ALLOWED_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
+  app.use(cors({ origin: origins.includes("*") ? "*" : origins, credentials: false }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -484,12 +486,60 @@ app.get("/api/admin/users", async (req, res) => {
     users.push({
       id: u.id,
       email: u.email || "(no email)",
+      name: u.user_metadata?.name || "",
       role: prof?.role || "user",
       createdAt: prof?.created_at || u.created_at,
+      lastSignIn: u.last_sign_in_at || null,
       downloads: count || 0,
     });
   }
   res.json(users);
+});
+
+/* Create a user (admin adds an account manually) */
+app.post("/api/admin/users", async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const { email, password, role = "user", name = "" } = req.body || {};
+  if (!email || !password || password.length < 6) {
+    return res.status(400).json({ error: "Email and a password (min 6 chars) are required." });
+  }
+  const { data, error } = await ctx.sb.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: name ? { name } : undefined,
+  });
+  if (error) return res.status(500).json({ error: error.message });
+
+  if (role === "admin" || role === "user") {
+    await ctx.sb.from("profiles").upsert({ id: data.user.id, role });
+  }
+  res.json({ ok: true, id: data.user.id });
+});
+
+/* Edit a user (email / password / role) */
+app.put("/api/admin/users/:id", async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const { email, password, role, name } = req.body || {};
+
+  const attrs = {};
+  if (email) attrs.email = email;
+  if (password) {
+    if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+    attrs.password = password;
+  }
+  if (name !== undefined) attrs.user_metadata = { name };
+  if (Object.keys(attrs).length) {
+    const { error } = await ctx.sb.auth.admin.updateUserById(req.params.id, attrs);
+    if (error) return res.status(500).json({ error: error.message });
+  }
+  if (role === "admin" || role === "user") {
+    const { error } = await ctx.sb.from("profiles").update({ role }).eq("id", req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+  }
+  res.json({ ok: true });
 });
 
 /* Delete a user (auth + profile cascade + their history) */

@@ -1,21 +1,9 @@
-/* own downloader — Text → Audio tab (edge-tts, free neural voices) */
+/* own downloader — Text → Audio pane (edge-tts, free neural voices) */
 
 const $t = (id) => document.getElementById(id);
 
 let allVoices = [];
 let selectedVoice = "en-US-GuyNeural";
-
-/* ---------- tab switching ---------- */
-
-$t("tab-dl").addEventListener("click", () => switchPane("dl"));
-$t("tab-tts").addEventListener("click", () => switchPane("tts"));
-
-function switchPane(which) {
-  $t("tab-dl").classList.toggle("active", which === "dl");
-  $t("tab-tts").classList.toggle("active", which === "tts");
-  $t("pane-dl").classList.toggle("hidden", which !== "dl");
-  $t("pane-tts").classList.toggle("hidden", which !== "tts");
-}
 
 /* ---------- voice list ---------- */
 

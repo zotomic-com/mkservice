@@ -38,6 +38,24 @@ function formatBytes(bytes) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sidebar navigation                                                  */
+/* ------------------------------------------------------------------ */
+
+document.querySelectorAll(".nav-item[data-pane]").forEach((btn) => {
+  btn.addEventListener("click", () => switchPane(btn.dataset.pane));
+});
+
+function switchPane(which) {
+  document.querySelectorAll(".nav-item[data-pane]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.pane === which));
+  ["dl", "tts", "profile"].forEach((p) => {
+    const pane = $("pane-" + p);
+    if (pane) pane.classList.toggle("hidden", p !== which);
+  });
+  if (which === "profile") renderProfile();
+}
+
+/* ------------------------------------------------------------------ */
 /* Init: detect server mode, restore session, load history             */
 /* ------------------------------------------------------------------ */
 
@@ -51,6 +69,8 @@ function formatBytes(bytes) {
 
   await Auth.init();
   History.reload();
+  // Deep-link panes (e.g. index.html#tts opens the Audio tool)
+  if (location.hash === "#tts") switchPane("tts");
 })();
 
 /* ------------------------------------------------------------------ */

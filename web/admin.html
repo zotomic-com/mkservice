@@ -3,56 +3,135 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin — own downloader</title>
+  <title>Admin — MK Service</title>
+  <meta name="theme-color" content="#0b0e14" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icons/icon-192.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="bg-glow"></div>
-
-  <nav class="topbar">
-    <a href="index.html" class="logo-mini" style="text-decoration:none;color:var(--text)">own<span>dl</span> / admin</a>
-    <div class="auth-area"><button id="signout-btn" class="btn text small-btn hidden">Sign out</button></div>
-  </nav>
-
-  <main class="wrap admin-wrap">
-    <section id="denied" class="loader hidden">
-      <div class="spinner"></div>
-      <p>Checking your access…</p>
-    </section>
-
-    <section id="no-access" class="no-access hidden">
-      <h2>🚫 Admin access required</h2>
-      <p>Sign in with an account that has the <code>admin</code> role.</p>
-      <a href="index.html" class="btn ghost">← Back to downloader</a>
-    </section>
-
-    <section id="panel" class="hidden">
-      <h1 class="admin-title">Admin dashboard</h1>
-
-      <div class="admin-card">
-        <h2>👥 Users <span id="user-count" class="count"></span></h2>
-        <div class="table-wrap">
-          <table id="users-table">
-            <thead><tr><th>Email</th><th>Role</th><th>Joined</th><th>Downloads</th><th></th></tr></thead>
-            <tbody></tbody>
-          </table>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="index.html">MK<span>service</span></a>
+      <nav class="side-nav">
+        <a class="nav-item" href="index.html"><span class="ico">⬇</span> Downloads</a>
+        <a class="nav-item" href="index.html#tts"><span class="ico">🔊</span> Audio</a>
+        <a class="nav-item active" href="admin.html"><span class="ico">🛡</span> Admin</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="side-user">
+          <span class="avatar">A</span>
+          <div class="side-user-meta"><strong>Admin</strong><span id="admin-email"></span></div>
         </div>
+        <button id="signout-btn" class="btn text full hidden">Sign out</button>
       </div>
+    </aside>
 
-      <div class="admin-card">
-        <h2>🗂️ Download history (links only) <span id="dl-count" class="count"></span></h2>
-        <div class="table-wrap">
-          <table id="downloads-table">
-            <thead><tr><th>User</th><th>Title</th><th>Platform</th><th>Quality</th><th>When</th><th></th></tr></thead>
-            <tbody></tbody>
-          </table>
+    <main class="main">
+      <section id="denied" class="loader">
+        <div class="spinner"></div>
+        <p>Checking your access…</p>
+      </section>
+
+      <section id="no-access" class="no-access hidden">
+        <h2>🚫 Admin access required</h2>
+        <p>Sign in with an account that has the <code>admin</code> role.</p>
+        <a href="index.html" class="btn ghost">← Back to app</a>
+      </section>
+
+      <section id="panel" class="hidden">
+        <div class="pane-title">
+          <h2>🛡 Admin dashboard</h2>
+          <p class="pane-sub">Manage users and monitor activity.</p>
         </div>
-      </div>
-    </section>
-  </main>
+
+        <!-- Stats -->
+        <div class="stats-row">
+          <div class="stat-card"><span id="stat-users" class="stat-num">—</span><span class="stat-label">Users</span></div>
+          <div class="stat-card"><span id="stat-downloads" class="stat-num">—</span><span class="stat-label">Download records</span></div>
+          <div class="stat-card"><span id="stat-admins" class="stat-num">—</span><span class="stat-label">Admins</span></div>
+        </div>
+
+        <!-- Top downloads -->
+        <div class="admin-card">
+          <h2>🏆 Top downloads</h2>
+          <div class="top-grid">
+            <div>
+              <h4>Most active users</h4>
+              <ul id="top-users" class="top-list"><li class="dim">—</li></ul>
+            </div>
+            <div>
+              <h4>Most downloaded platforms</h4>
+              <ul id="top-platforms" class="top-list"><li class="dim">—</li></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Users -->
+        <div class="admin-card">
+          <div class="downloads-head">
+            <h2>👥 Users <span id="user-count" class="count"></span></h2>
+            <button id="add-user-btn" class="btn primary small-btn">＋ Add user</button>
+          </div>
+          <div class="table-wrap">
+            <table id="users-table">
+              <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Last sign in</th><th>Downloads</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="admin-card">
+          <h2>🗂️ Download history (links only) <span id="dl-count" class="count"></span></h2>
+          <div class="table-wrap">
+            <table id="downloads-table">
+              <thead><tr><th>User</th><th>Title</th><th>Platform</th><th>Quality</th><th>When</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add / edit user modal -->
+  <div id="user-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <button class="modal-close" id="user-modal-close">✕</button>
+      <h3 class="modal-title" id="user-modal-title">Add user</h3>
+      <form id="user-form">
+        <input id="um-email" type="email" placeholder="Email" required />
+        <input id="um-name" type="text" placeholder="Display name (optional)" />
+        <div class="password-row">
+          <input id="um-pass" type="password" placeholder="Password (min. 6)" minlength="6" />
+          <button type="button" class="eye-btn" data-eye="um-pass">👁</button>
+        </div>
+        <select id="um-role">
+          <option value="user">user</option>
+          <option value="admin">admin</option>
+        </select>
+        <p id="um-error" class="input-error hidden"></p>
+        <button id="um-submit" type="submit" class="btn primary full">Create user</button>
+      </form>
+      <p class="hint" id="um-note">Leaving the password empty when editing keeps it unchanged.</p>
+    </div>
+  </div>
+
+  <!-- User details modal -->
+  <div id="details-modal" class="modal-backdrop hidden">
+    <div class="modal wide">
+      <button class="modal-close" id="details-close">✕</button>
+      <h3 class="modal-title">User details</h3>
+      <div id="details-body"></div>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
   <script src="admin.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  </script>
 </body>
 </html>

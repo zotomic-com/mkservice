@@ -3,145 +3,235 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>own downloader — YouTube · TikTok · Instagram · Facebook</title>
+  <title>MK Service — YouTube · TikTok · Instagram · Facebook</title>
+  <meta name="theme-color" content="#0b0e14" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="bg-glow"></div>
+  <div class="app">
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="sidebar">
+      <a class="brand" href="index.html">MK<span>service</span></a>
 
-  <nav class="topbar">
-    <span class="logo-mini">own<span>dl</span></span>
-    <div id="auth-area" class="auth-area">
-      <!-- filled by auth.js -->
-    </div>
-  </nav>
+      <nav class="side-nav">
+        <button class="nav-item active" data-pane="dl"><span class="ico">⬇</span> Downloads</button>
+        <button class="nav-item" data-pane="tts"><span class="ico">🔊</span> Audio</button>
+        <button class="nav-item" data-pane="profile"><span class="ico">👤</span> Profile</button>
+        <a id="nav-admin" class="nav-item admin-link hidden" href="admin.html"><span class="ico">🛡</span> Admin</a>
+      </nav>
 
-  <main class="wrap">
-    <header class="hero">
-      <h1>own<span>downloader</span></h1>
-      <p class="tagline">Save videos from YouTube, TikTok, Instagram &amp; Facebook — straight to your device.</p>
-      <div class="badges">
-        <span class="badge yt">YouTube</span>
-        <span class="badge tt">TikTok</span>
-        <span class="badge ig">Instagram</span>
-        <span class="badge fb">Facebook</span>
+      <div class="sidebar-foot">
+        <div id="auth-area" class="auth-area"><!-- filled by auth.js --></div>
+        <p class="install-hint hidden" id="install-hint">
+          💡 Install this app: <button id="install-btn" class="mini-btn">Install</button>
+        </p>
       </div>
-    </header>
+    </aside>
 
-    <div class="tool-tabs">
-      <button id="tab-dl" class="tool-tab active">⬇ &nbsp;Video downloader</button>
-      <button id="tab-tts" class="tool-tab">🔊 &nbsp;Text → Audio</button>
-    </div>
+    <!-- ================= MAIN ================= -->
+    <main class="main">
 
-    <!-- ================= TAB: VIDEO DOWNLOADER ================= -->
-    <div id="pane-dl">
-    <form id="url-form" class="input-card" autocomplete="off">
-      <div class="input-row">
-        <svg class="link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-        <input id="url" type="url" placeholder="Paste a video link here..." required />
-        <button id="fetch-btn" type="submit">Fetch</button>
-      </div>
-      <p id="input-error" class="input-error hidden"></p>
-    </form>
+      <!-- PANE: DOWNLOADS -->
+      <section id="pane-dl" class="pane">
+        <header class="hero">
+          <h1>MK <span>service</span></h1>
+          <p class="tagline">Save videos from YouTube, TikTok, Instagram &amp; Facebook — straight to your device.</p>
+          <div class="badges">
+            <span class="badge yt">YouTube</span>
+            <span class="badge tt">TikTok</span>
+            <span class="badge ig">Instagram</span>
+            <span class="badge fb">Facebook</span>
+          </div>
+        </header>
 
-    <section id="loader" class="loader hidden">
-      <div class="spinner"></div>
-      <p>Contacting the platform…</p>
-    </section>
+        <form id="url-form" class="input-card" autocomplete="off">
+          <div class="input-row">
+            <svg class="link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <input id="url" type="url" placeholder="Paste a video link here..." required />
+            <button id="fetch-btn" type="submit">Fetch</button>
+          </div>
+          <p id="input-error" class="input-error hidden"></p>
+        </form>
 
-    <!-- Video info card -->
-    <section id="info-card" class="info-card hidden">
-      <div class="thumb-wrap">
-        <img id="thumb" src="" alt="" />
-        <span id="platform-tag" class="platform-tag"></span>
-      </div>
-      <div class="info-body">
-        <h2 id="title"></h2>
-        <p id="meta" class="meta"></p>
+        <section id="loader" class="loader hidden">
+          <div class="spinner"></div>
+          <p>Contacting the platform…</p>
+        </section>
 
-        <div class="quality-grid" id="quality-grid"></div>
+        <!-- Video info card -->
+        <section id="info-card" class="info-card hidden">
+          <div class="thumb-wrap">
+            <img id="thumb" src="" alt="" />
+            <span id="platform-tag" class="platform-tag"></span>
+          </div>
+          <div class="info-body">
+            <h2 id="title"></h2>
+            <p id="meta" class="meta"></p>
 
-        <div class="actions">
-          <button id="dl-video" class="btn primary">⬇ &nbsp;Download video</button>
-          <button id="dl-audio" class="btn ghost">🎵 &nbsp;Audio only (MP3)</button>
-          <button id="reset" class="btn text">Clear</button>
+            <div class="quality-grid" id="quality-grid"></div>
+
+            <div class="actions">
+              <button id="dl-video" class="btn primary">⬇ &nbsp;Download video</button>
+              <button id="dl-audio" class="btn ghost">🎵 &nbsp;Audio only (MP3)</button>
+              <button id="reset" class="btn text">Clear</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Active download -->
+        <section id="progress-card" class="progress-card hidden">
+          <div class="progress-head">
+            <span id="prog-label">Downloading…</span>
+            <span id="prog-percent">0%</span>
+          </div>
+          <div class="bar"><div id="prog-fill" class="fill"></div></div>
+          <div class="progress-sub">
+            <span id="prog-speed"></span>
+            <span id="prog-eta"></span>
+          </div>
+          <p id="prog-error" class="prog-error hidden"></p>
+          <p id="prog-done" class="prog-done hidden"></p>
+          <div id="save-row" class="save-row hidden"></div>
+        </section>
+
+        <!-- Download history -->
+        <section id="history-section" class="downloads hidden">
+          <div class="downloads-head">
+            <h3>🕘 Your downloads</h3>
+            <button id="clear-history" class="btn text small-btn">Clear</button>
+          </div>
+          <p id="history-note" class="history-note"></p>
+          <ul id="history-list"></ul>
+        </section>
+      </section>
+
+      <!-- PANE: AUDIO (text to speech) -->
+      <section id="pane-tts" class="pane hidden">
+        <div class="pane-title"><h2>🔊 Text → Audio</h2>
+          <p class="pane-sub">Free neural voices · the MP3 is generated and saved straight to your device.</p>
         </div>
-      </div>
-    </section>
-
-    <!-- Active download -->
-    <section id="progress-card" class="progress-card hidden">
-      <div class="progress-head">
-        <span id="prog-label">Downloading…</span>
-        <span id="prog-percent">0%</span>
-      </div>
-      <div class="bar"><div id="prog-fill" class="fill"></div></div>
-      <div class="progress-sub">
-        <span id="prog-speed"></span>
-        <span id="prog-eta"></span>
-      </div>
-      <p id="prog-error" class="prog-error hidden"></p>
-      <p id="prog-done" class="prog-done hidden"></p>
-      <div id="save-row" class="save-row hidden"></div>
-    </section>
-
-    <!-- Download history -->
-    <section id="history-section" class="downloads hidden">
-      <div class="downloads-head">
-        <h3>🕘 Your downloads</h3>
-        <button id="clear-history" class="btn text small-btn">Clear</button>
-      </div>
-      <p id="history-note" class="history-note"></p>
-      <ul id="history-list"></ul>
-    </section>
-    </div><!-- /pane-dl -->
-
-    <!-- ================= TAB: TEXT → AUDIO ================= -->
-    <div id="pane-tts" class="hidden">
-      <div class="input-card tts-card">
-        <textarea id="tts-text" rows="6" maxlength="3000" placeholder="Type or paste the text you want to hear... (max 3000 characters)"></textarea>
-        <div class="tts-row">
+        <div class="input-card tts-card">
+          <textarea id="tts-text" rows="6" maxlength="3000" placeholder="Type or paste the text you want to hear... (max 3000 characters)"></textarea>
           <div class="tts-voice-wrap">
-            <input id="tts-search" type="text" placeholder="🔍 Search 400+ voices (e.g. english, hindi, arabic...)" />
+            <input id="tts-search" type="text" placeholder="🔍 Search 300+ voices (e.g. english, hindi, arabic...)" />
             <select id="tts-voice" size="6"></select>
           </div>
+          <div class="tts-actions">
+            <span id="tts-char-count">0 / 3000</span>
+            <button id="tts-btn" type="button" class="btn primary">🔊 &nbsp;Generate audio</button>
+          </div>
+          <p id="tts-error" class="input-error hidden"></p>
+          <p id="tts-status" class="loader hidden"><span class="spinner"></span> Generating your audio…</p>
         </div>
-        <div class="tts-actions">
-          <span id="tts-char-count">0 / 3000</span>
-          <button id="tts-btn" type="button" class="btn primary">🔊 &nbsp;Generate audio</button>
-        </div>
-        <p id="tts-error" class="input-error hidden"></p>
-        <p id="tts-status" class="loader hidden"><span class="spinner"></span> Generating your audio…</p>
-      </div>
 
-      <section id="tts-result" class="tts-result hidden">
-        <h3>🎵 Your audio is ready</h3>
-        <audio id="tts-audio" controls></audio>
-        <div class="actions">
-          <a id="tts-download" class="btn primary" download>⬇ &nbsp;Save MP3 to my device</a>
+        <section id="tts-result" class="tts-result hidden">
+          <h3>🎵 Your audio is ready</h3>
+          <audio id="tts-audio" controls></audio>
+          <div class="actions">
+            <a id="tts-download" class="btn primary" download>⬇ &nbsp;Save MP3 to my device</a>
+          </div>
+        </section>
+      </section>
+
+      <!-- PANE: PROFILE -->
+      <section id="pane-profile" class="pane hidden">
+        <div class="pane-title"><h2>👤 Profile</h2>
+          <p class="pane-sub">Manage your account.</p>
+        </div>
+
+        <div id="profile-signed-out" class="profile-note hidden">
+          <p>🔒 Sign in to manage your profile and keep your download history.</p>
+          <button class="btn primary" id="profile-signin">Sign in / Create account</button>
+        </div>
+
+        <div id="profile-panel" class="hidden">
+          <div class="profile-card">
+            <h3>Display name</h3>
+            <div class="profile-row">
+              <input id="pf-name" type="text" placeholder="Your name" />
+              <button id="pf-name-save" class="btn ghost">Save</button>
+            </div>
+            <p id="pf-name-msg" class="hint"></p>
+          </div>
+
+          <div class="profile-card">
+            <h3>Email</h3>
+            <p class="hint">Current: <span id="pf-email-current"></span></p>
+            <div class="profile-row">
+              <input id="pf-email" type="email" placeholder="New email" />
+              <button id="pf-email-save" class="btn ghost">Change</button>
+            </div>
+            <p id="pf-email-msg" class="hint"></p>
+          </div>
+
+          <div class="profile-card">
+            <h3>Change password</h3>
+            <div class="profile-row password-row">
+              <input id="pf-pass" type="password" placeholder="New password (min. 6 characters)" minlength="6" />
+              <button type="button" class="eye-btn" data-eye="pf-pass" title="Show / hide">👁</button>
+              <button id="pf-pass-save" class="btn ghost">Update</button>
+            </div>
+            <p id="pf-pass-msg" class="hint"></p>
+          </div>
         </div>
       </section>
-    </div><!-- /pane-tts -->
 
-    <footer>
-      <p>Powered by yt-dlp · No accounts required — optional login keeps your history · for personal use of content you have the right to download.</p>
-    </footer>
-  </main>
+      <footer>
+        <p>MK Service · powered by yt-dlp &amp; edge-tts · No accounts required — optional login keeps your history · for personal use of content you have the right to download.</p>
+      </footer>
+    </main>
+  </div>
 
   <!-- Auth modal -->
   <div id="auth-modal" class="modal-backdrop hidden">
     <div class="modal">
       <button class="modal-close" id="auth-close">✕</button>
-      <div class="auth-tabs">
-        <button id="tab-signin" class="auth-tab active">Sign in</button>
-        <button id="tab-signup" class="auth-tab">Create account</button>
+
+      <!-- sign in / sign up view -->
+      <div id="auth-main">
+        <div class="auth-tabs">
+          <button id="tab-signin" class="auth-tab active">Sign in</button>
+          <button id="tab-signup" class="auth-tab">Create account</button>
+        </div>
+        <form id="auth-form">
+          <input id="auth-email" type="email" placeholder="Email" required />
+          <div class="password-row">
+            <input id="auth-password" type="password" placeholder="Password (min. 6 characters)" minlength="6" required />
+            <button type="button" class="eye-btn" data-eye="auth-password" title="Show / hide">👁</button>
+          </div>
+          <p id="auth-error" class="input-error hidden"></p>
+          <button id="auth-submit" type="submit" class="btn primary full">Sign in</button>
+          <button type="button" id="forgot-link" class="btn text full">Forgot password?</button>
+        </form>
       </div>
-      <form id="auth-form">
-        <input id="auth-email" type="email" placeholder="Email" required />
-        <input id="auth-password" type="password" placeholder="Password (min. 6 characters)" minlength="6" required />
-        <p id="auth-error" class="input-error hidden"></p>
-        <button id="auth-submit" type="submit" class="btn primary full">Sign in</button>
-      </form>
+
+      <!-- forgot password view -->
+      <div id="auth-forgot" class="hidden">
+        <h3 class="modal-title">Reset your password</h3>
+        <p class="hint">Enter your account email — we'll send you a reset link.</p>
+        <form id="forgot-form">
+          <input id="forgot-email" type="email" placeholder="Email" required />
+          <p id="forgot-error" class="input-error hidden"></p>
+          <button id="forgot-submit" type="submit" class="btn primary full">Send reset link</button>
+          <button type="button" id="forgot-back" class="btn text full">← Back to sign in</button>
+        </form>
+      </div>
+
+      <!-- recovery view (opened from the email link) -->
+      <div id="auth-recovery" class="hidden">
+        <h3 class="modal-title">Set a new password</h3>
+        <form id="recovery-form">
+          <div class="password-row">
+            <input id="recovery-pass" type="password" placeholder="New password (min. 6 characters)" minlength="6" required />
+            <button type="button" class="eye-btn" data-eye="recovery-pass" title="Show / hide">👁</button>
+          </div>
+          <p id="recovery-error" class="input-error hidden"></p>
+          <button id="recovery-submit" type="submit" class="btn primary full">Save new password</button>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -150,5 +240,11 @@
   <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="tts.js"></script>
+  <script src="profile.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  </script>
 </body>
 </html>

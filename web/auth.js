@@ -9,17 +9,24 @@ const Auth = {
   user: null,
   isAdmin: false,
 
+  get name() {
+    return this.user?.user_metadata?.name || "";
+  },
+
   async init() {
     if (!authEnabled) { renderAuthArea(); return; }
     const { data } = await sb.auth.getSession();
     this.user = data?.session?.user || null;
     await this.refreshRole();
-    sb.auth.onAuthStateChange(async () => {
+
+    sb.auth.onAuthStateChange(async (event) => {
       const { data: d } = await sb.auth.getSession();
       this.user = d?.session?.user || null;
       await this.refreshRole();
       renderAuthArea();
       History.reload();
+      // Password recovery email link opens the app with recovery tokens
+      if (event === "PASSWORD_RECOVERY") openRecovery();
     });
     renderAuthArea();
   },
@@ -45,6 +52,27 @@ const Auth = {
     return data;
   },
 
+  async sendResetEmail(email) {
+    const redirectTo = window.location.origin + "/index.html";
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw error;
+  },
+
+  async updatePassword(newPass) {
+    const { error } = await sb.auth.updateUser({ password: newPass });
+    if (error) throw error;
+  },
+
+  async updateName(name) {
+    const { error } = await sb.auth.updateUser({ data: { name } });
+    if (error) throw error;
+  },
+
+  async updateEmail(email) {
+    const { error } = await sb.auth.updateUser({ email });
+    if (error) throw error;
+  },
+
   async signOut() {
     await sb.auth.signOut();
     this.user = null;
@@ -53,35 +81,61 @@ const Auth = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Header UI                                                           */
+/* Sidebar auth area                                                   */
 /* ------------------------------------------------------------------ */
 
 function renderAuthArea() {
   const area = document.getElementById("auth-area");
-  if (!authEnabled) { area.innerHTML = ""; return; }
+  const adminLink = document.getElementById("nav-admin");
+  if (!area) return;
 
-  if (!Auth.user) {
-    area.innerHTML = `<button id="open-auth" class="btn ghost small-btn">Sign in</button>`;
-    document.getElementById("open-auth").addEventListener("click", openAuthModal);
+  if (!authEnabled) {
+    area.innerHTML = `<p class="side-auth-note">Local mode — no accounts needed.</p>`;
+    if (adminLink) adminLink.classList.add("hidden");
     return;
   }
 
-  const email = Auth.user.email || "account";
+  if (adminLink) adminLink.classList.toggle("hidden", !Auth.isAdmin);
+
+  if (!Auth.user) {
+    area.innerHTML = `<button id="open-auth" class="btn primary full">Sign in</button>`;
+    document.getElementById("open-auth")?.addEventListener("click", openAuthModal);
+    return;
+  }
+
+  const initial = (Auth.name || Auth.user.email || "A").trim().charAt(0).toUpperCase();
   area.innerHTML = `
-    <span class="account-chip">
-      <span class="dot"></span>${escapeHtml(email)}
-    </span>
-    ${Auth.isAdmin ? `<a href="admin.html" class="btn ghost small-btn">Admin</a>` : ""}
-    <button id="signout-btn" class="btn text small-btn">Sign out</button>
+    <div class="side-user">
+      <span class="avatar">${escapeHtml(initial)}</span>
+      <div class="side-user-meta">
+        <strong>${escapeHtml(Auth.name || "Account")}</strong>
+        <span>${escapeHtml(Auth.user.email || "")}</span>
+      </div>
+    </div>
+    <button id="signout-btn" class="btn text full">Sign out</button>
   `;
-  document.getElementById("signout-btn").addEventListener("click", Auth.signOut.bind(Auth));
+  document.getElementById("signout-btn")?.addEventListener("click", Auth.signOut.bind(Auth));
 }
 
 /* ------------------------------------------------------------------ */
-/* Modal                                                               */
+/* Eye (show/hide password) helper                                     */
+/* ------------------------------------------------------------------ */
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".eye-btn");
+  if (!btn) return;
+  const input = document.getElementById(btn.dataset.eye);
+  if (!input) return;
+  input.type = input.type === "password" ? "text" : "password";
+  btn.textContent = input.type === "password" ? "👁" : "🙈";
+});
+
+/* ------------------------------------------------------------------ */
+/* Auth modal: sign in / sign up / forgot / recovery                   */
 /* ------------------------------------------------------------------ */
 
 function openAuthModal() {
+  showAuthView("main");
   document.getElementById("auth-modal").classList.remove("hidden");
   setAuthError("");
 }
@@ -90,19 +144,24 @@ function closeAuthModal() {
   document.getElementById("auth-modal").classList.add("hidden");
 }
 
+function showAuthView(view) {
+  ["auth-main", "auth-forgot", "auth-recovery"].forEach((id) =>
+    document.getElementById(id).classList.toggle("hidden", id !== "auth-" + view));
+}
+
 function setAuthError(msg) {
   const el = document.getElementById("auth-error");
   if (msg) { el.textContent = msg; el.classList.remove("hidden"); }
   else el.classList.add("hidden");
 }
 
-document.getElementById("auth-close").addEventListener("click", closeAuthModal);
-document.getElementById("auth-modal").addEventListener("click", (e) => {
+document.getElementById("auth-close")?.addEventListener("click", closeAuthModal);
+document.getElementById("auth-modal")?.addEventListener("click", (e) => {
   if (e.target === e.currentTarget) closeAuthModal();
 });
 
-document.getElementById("tab-signin").addEventListener("click", () => switchTab(true));
-document.getElementById("tab-signup").addEventListener("click", () => switchTab(false));
+document.getElementById("tab-signin")?.addEventListener("click", () => switchTab(true));
+document.getElementById("tab-signup")?.addEventListener("click", () => switchTab(false));
 
 function switchTab(signin) {
   document.getElementById("tab-signin").classList.toggle("active", signin);
@@ -111,7 +170,7 @@ function switchTab(signin) {
   setAuthError("");
 }
 
-document.getElementById("auth-form").addEventListener("submit", async (e) => {
+document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!authEnabled) return;
   const email = document.getElementById("auth-email").value.trim();
@@ -137,6 +196,63 @@ document.getElementById("auth-form").addEventListener("submit", async (e) => {
     History.reload();
   } catch (err) {
     setAuthError(err.message || "Something went wrong.");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* Forgot password */
+document.getElementById("forgot-link")?.addEventListener("click", () => showAuthView("forgot"));
+document.getElementById("forgot-back")?.addEventListener("click", () => showAuthView("main"));
+
+document.getElementById("forgot-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!authEnabled) return;
+  const email = document.getElementById("forgot-email").value.trim();
+  const errEl = document.getElementById("forgot-error");
+  const btn = document.getElementById("forgot-submit");
+  btn.disabled = true;
+  errEl.classList.add("hidden");
+  try {
+    await Auth.sendResetEmail(email);
+    errEl.textContent = "✓ Reset link sent! Check your inbox (and spam folder).";
+    errEl.classList.remove("hidden");
+    errEl.style.color = "var(--good)";
+  } catch (err) {
+    errEl.textContent = err.message || "Could not send reset email.";
+    errEl.classList.remove("hidden");
+    errEl.style.color = "";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* Recovery (opens via the email link) */
+function openRecovery() {
+  if (!authEnabled) return;
+  showAuthView("recovery");
+  document.getElementById("auth-modal").classList.remove("hidden");
+}
+
+document.getElementById("recovery-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!authEnabled) return;
+  const pass = document.getElementById("recovery-pass").value;
+  const errEl = document.getElementById("recovery-error");
+  const btn = document.getElementById("recovery-submit");
+  btn.disabled = true;
+  errEl.classList.add("hidden");
+  try {
+    await Auth.updatePassword(pass);
+    errEl.textContent = "✓ Password updated! You're signed in.";
+    errEl.classList.remove("hidden");
+    errEl.style.color = "var(--good)";
+    renderAuthArea();
+    setTimeout(closeAuthModal, 1200);
+  } catch (err) {
+    errEl.textContent = err.message || "Could not update password.";
+    errEl.classList.remove("hidden");
+    errEl.style.color = "";
   } finally {
     btn.disabled = false;
   }
@@ -202,6 +318,7 @@ async function renderHistory(list) {
   const section = document.getElementById("history-section");
   const ul = document.getElementById("history-list");
   const note = document.getElementById("history-note");
+  if (!section || !ul) return;
 
   if (!list.length) { section.classList.add("hidden"); return; }
   section.classList.remove("hidden");
@@ -213,17 +330,19 @@ async function renderHistory(list) {
   ul.innerHTML = "";
   for (const r of list) {
     const li = document.createElement("li");
-    const when = timeAgo(r.ts);
     li.innerHTML = `
       <div class="hist-main">
         <span class="hist-title">${escapeHtml(r.title || r.url)}</span>
-        <span class="hist-sub">${escapeHtml(r.platform || "")}${r.quality ? " · " + escapeHtml(r.quality) : ""} · ${r.mode === "audio" ? "MP3" : "video"} · ${when}</span>
+        <span class="hist-sub">${escapeHtml(r.platform || "")}${r.quality ? " · " + escapeHtml(r.quality) : ""} · ${r.mode === "audio" ? "MP3" : "video"} · ${timeAgo(r.ts)}</span>
       </div>
       <button class="btn ghost small-btn again-btn" data-url="${escapeHtml(r.url)}">↻ again</button>
     `;
-    li.querySelector(".again-btn").addEventListener("click", () => {
-      document.getElementById("url").value = r.url;
-      document.getElementById("url-form").dispatchEvent(new Event("submit", { cancelable: true }));
+    li.querySelector(".again-btn")?.addEventListener("click", () => {
+      const urlInput = document.getElementById("url");
+      if (!urlInput) return;
+      urlInput.value = r.url;
+      switchPane("dl");
+      document.getElementById("url-form")?.dispatchEvent(new Event("submit", { cancelable: true }));
     });
     ul.appendChild(li);
   }
@@ -237,7 +356,7 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
-document.getElementById("clear-history").addEventListener("click", () => History.clear());
+document.getElementById("clear-history")?.addEventListener("click", () => History.clear());
 
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

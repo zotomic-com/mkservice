@@ -1,0 +1,18 @@
+{
+  "name": "own-downloader",
+  "version": "1.0.0",
+  "description": "Multi-platform video downloader (YouTube, TikTok, Instagram, Facebook)",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
+    "cors": "^2.8.6",
+    "express": "^5.3.0"
+  }
+}

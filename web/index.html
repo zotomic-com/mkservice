@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>own downloader — YouTube · TikTok · Instagram · Facebook</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <nav class="topbar">
+    <span class="logo-mini">own<span>dl</span></span>
+    <div id="auth-area" class="auth-area">
+      <!-- filled by auth.js -->
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <header class="hero">
+      <h1>own<span>downloader</span></h1>
+      <p class="tagline">Save videos from YouTube, TikTok, Instagram &amp; Facebook — straight to your device.</p>
+      <div class="badges">
+        <span class="badge yt">YouTube</span>
+        <span class="badge tt">TikTok</span>
+        <span class="badge ig">Instagram</span>
+        <span class="badge fb">Facebook</span>
+      </div>
+    </header>
+
+    <form id="url-form" class="input-card" autocomplete="off">
+      <div class="input-row">
+        <svg class="link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <input id="url" type="url" placeholder="Paste a video link here..." required />
+        <button id="fetch-btn" type="submit">Fetch</button>
+      </div>
+      <p id="input-error" class="input-error hidden"></p>
+    </form>
+
+    <section id="loader" class="loader hidden">
+      <div class="spinner"></div>
+      <p>Contacting the platform…</p>
+    </section>
+
+    <!-- Video info card -->
+    <section id="info-card" class="info-card hidden">
+      <div class="thumb-wrap">
+        <img id="thumb" src="" alt="" />
+        <span id="platform-tag" class="platform-tag"></span>
+      </div>
+      <div class="info-body">
+        <h2 id="title"></h2>
+        <p id="meta" class="meta"></p>
+
+        <div class="quality-grid" id="quality-grid"></div>
+
+        <div class="actions">
+          <button id="dl-video" class="btn primary">⬇ &nbsp;Download video</button>
+          <button id="dl-audio" class="btn ghost">🎵 &nbsp;Audio only (MP3)</button>
+          <button id="reset" class="btn text">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active download -->
+    <section id="progress-card" class="progress-card hidden">
+      <div class="progress-head">
+        <span id="prog-label">Downloading…</span>
+        <span id="prog-percent">0%</span>
+      </div>
+      <div class="bar"><div id="prog-fill" class="fill"></div></div>
+      <div class="progress-sub">
+        <span id="prog-speed"></span>
+        <span id="prog-eta"></span>
+      </div>
+      <p id="prog-error" class="prog-error hidden"></p>
+      <p id="prog-done" class="prog-done hidden"></p>
+      <div id="save-row" class="save-row hidden"></div>
+    </section>
+
+    <!-- Download history -->
+    <section id="history-section" class="downloads hidden">
+      <div class="downloads-head">
+        <h3>🕘 Your downloads</h3>
+        <button id="clear-history" class="btn text small-btn">Clear</button>
+      </div>
+      <p id="history-note" class="history-note"></p>
+      <ul id="history-list"></ul>
+    </section>
+
+    <footer>
+      <p>Powered by yt-dlp · No accounts required — optional login keeps your history · for personal use of content you have the right to download.</p>
+    </footer>
+  </main>
+
+  <!-- Auth modal -->
+  <div id="auth-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <button class="modal-close" id="auth-close">✕</button>
+      <div class="auth-tabs">
+        <button id="tab-signin" class="auth-tab active">Sign in</button>
+        <button id="tab-signup" class="auth-tab">Create account</button>
+      </div>
+      <form id="auth-form">
+        <input id="auth-email" type="email" placeholder="Email" required />
+        <input id="auth-password" type="password" placeholder="Password (min. 6 characters)" minlength="6" required />
+        <p id="auth-error" class="input-error hidden"></p>
+        <button id="auth-submit" type="submit" class="btn primary full">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

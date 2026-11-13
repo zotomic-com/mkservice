@@ -97,6 +97,48 @@ function ytdlpArgs(extra = []) {
   return ["-m", "yt_dlp", ...extra];
 }
 
+/* YouTube sometimes serves degraded responses to cloud IPs.
+ * Retrying with alternative player clients usually recovers. */
+const YT_FALLBACKS = [
+  [],
+  ["--extractor-args", "youtube:player_client=tv"],
+  ["--extractor-args", "youtube:player_client=tv,web_safari,mweb"],
+];
+
+/* Optional login cookies (env var YTDLP_COOKIES, Netscape format) —
+ * set via the hosting dashboard, never stored in code */
+function cookiesArgs() {
+  const raw = process.env.YTDLP_COOKIES;
+  if (!raw) return [];
+  const file = path.join(os.tmpdir(), "ytdlp-cookies.txt");
+  try {
+    fs.writeFileSync(file, raw.replace(/\\n/g, "\n"), { flag: "w" });
+    return ["--cookies", file];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchVideoInfo(url) {
+  let lastErr;
+  for (const fallback of YT_FALLBACKS) {
+    try {
+      return await runYtDlp([
+        "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "15",
+        ...cookiesArgs(),
+        ...fallback,
+        url,
+      ]);
+    } catch (err) {
+      lastErr = err;
+      // Auth/geo/private errors won't be fixed by retrying with another client
+      const m = String(err.message || err).toLowerCase();
+      if (m.includes("private") || m.includes("geo") || m.includes("country") || m.includes("age")) break;
+    }
+  }
+  throw lastErr;
+}
+
 function spawnYtDlp(args) {
   return spawn("python", ytdlpArgs(args), { windowsHide: true });
 }
@@ -141,7 +183,7 @@ function friendlyError(msg, url) {
     return "YouTube is asking this server to prove it's not a bot for this video. Please try again in a minute or pick a different quality/link.";
   }
   if (m.includes("not available") || m.includes("video unavailable") || m.includes("unavailable") || m.includes("removed")) {
-    return "This video is unavailable — it may be deleted, private, region-locked, or the link is wrong.";
+    return "This video can't be fetched from this server — it may be deleted, private, region-locked, or the platform is restricting the server's IP. Please try again in a minute, or try a different link.";
   }
   if (m.includes("does not exist") || m.includes("not exist") || m.includes("invalid video id")) {
     return "That video doesn't exist. Double-check the link.";
@@ -184,9 +226,7 @@ app.post("/api/info", async (req, res) => {
   }
 
   try {
-    const raw = await runYtDlp([
-      "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "15", url,
-    ]);
+    const raw = await fetchVideoInfo(url);
     const info = JSON.parse(raw);
     const platform = detectPlatform(url);
 
@@ -256,6 +296,13 @@ function startJob(url, mode, qualityId) {
   } else {
     args.push("--merge-output-format", "mp4", "-S", "ext:mp4:m4a");
   }
+
+  // YouTube cloud-IP workaround: try the tv client first when the default fails
+  if (/youtube|youtu\.be/i.test(url)) {
+    args.push("--extractor-args", "youtube:player_client=tv,default");
+  }
+
+  args.push(...cookiesArgs());
   args.push(url);
 
   const proc = spawnYtDlp(args);

@@ -7,7 +7,8 @@ const AUTH = { Authorization: `Bearer ${process.env.RENDER_TOKEN}` };
 
 (async () => {
   const qs = new URLSearchParams({
-    serviceId: SERVICE_ID,
+    service: SERVICE_ID,
+    type: "app",
     limit: "40",
   });
   const res = await fetch(`https://api.render.com/v1/logs?${qs}`, { headers: AUTH });

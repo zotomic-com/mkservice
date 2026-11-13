@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Download engine
-RUN pip install --no-cache-dir -U yt-dlp
+# Download engine + text-to-speech
+RUN pip install --no-cache-dir -U yt-dlp edge-tts
 
 WORKDIR /app
 

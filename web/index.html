@@ -28,6 +28,13 @@
       </div>
     </header>
 
+    <div class="tool-tabs">
+      <button id="tab-dl" class="tool-tab active">⬇ &nbsp;Video downloader</button>
+      <button id="tab-tts" class="tool-tab">🔊 &nbsp;Text → Audio</button>
+    </div>
+
+    <!-- ================= TAB: VIDEO DOWNLOADER ================= -->
+    <div id="pane-dl">
     <form id="url-form" class="input-card" autocomplete="off">
       <div class="input-row">
         <svg class="link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
@@ -87,6 +94,34 @@
       <p id="history-note" class="history-note"></p>
       <ul id="history-list"></ul>
     </section>
+    </div><!-- /pane-dl -->
+
+    <!-- ================= TAB: TEXT → AUDIO ================= -->
+    <div id="pane-tts" class="hidden">
+      <div class="input-card tts-card">
+        <textarea id="tts-text" rows="6" maxlength="3000" placeholder="Type or paste the text you want to hear... (max 3000 characters)"></textarea>
+        <div class="tts-row">
+          <div class="tts-voice-wrap">
+            <input id="tts-search" type="text" placeholder="🔍 Search 400+ voices (e.g. english, hindi, arabic...)" />
+            <select id="tts-voice" size="6"></select>
+          </div>
+        </div>
+        <div class="tts-actions">
+          <span id="tts-char-count">0 / 3000</span>
+          <button id="tts-btn" type="button" class="btn primary">🔊 &nbsp;Generate audio</button>
+        </div>
+        <p id="tts-error" class="input-error hidden"></p>
+        <p id="tts-status" class="loader hidden"><span class="spinner"></span> Generating your audio…</p>
+      </div>
+
+      <section id="tts-result" class="tts-result hidden">
+        <h3>🎵 Your audio is ready</h3>
+        <audio id="tts-audio" controls></audio>
+        <div class="actions">
+          <a id="tts-download" class="btn primary" download>⬇ &nbsp;Save MP3 to my device</a>
+        </div>
+      </section>
+    </div><!-- /pane-tts -->
 
     <footer>
       <p>Powered by yt-dlp · No accounts required — optional login keeps your history · for personal use of content you have the right to download.</p>
@@ -114,5 +149,6 @@
   <script src="config.js"></script>
   <script src="auth.js"></script>
   <script src="app.js"></script>
+  <script src="tts.js"></script>
 </body>
 </html>

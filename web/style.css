@@ -391,6 +391,98 @@ a:hover { text-decoration: underline; }
 /* ---------- save row (public mode) ---------- */
 .save-row { margin-top: 12px; }
 
+/* ---------- tool tabs ---------- */
+.tool-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  justify-content: center;
+}
+
+.tool-tab {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.tool-tab:hover { color: var(--text); border-color: var(--accent); }
+.tool-tab.active {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #fff;
+  border-color: transparent;
+}
+
+/* ---------- text to audio ---------- */
+.tts-card { display: flex; flex-direction: column; gap: 12px; }
+
+#tts-text {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  padding: 14px;
+  font-size: 15px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  min-height: 120px;
+}
+#tts-text:focus { border-color: var(--accent); }
+
+.tts-voice-wrap { display: flex; flex-direction: column; gap: 8px; }
+
+#tts-search {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+}
+#tts-search:focus { border-color: var(--accent); }
+
+#tts-voice {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 8px;
+  font-size: 13px;
+  outline: none;
+  min-height: 150px;
+}
+#tts-voice:focus { border-color: var(--accent); }
+#tts-voice option { padding: 6px 10px; }
+#tts-voice option:checked { background: var(--accent); color: #fff; }
+
+.tts-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+#tts-char-count { color: var(--muted); font-size: 12px; }
+
+.tts-result {
+  margin-top: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  animation: rise .25s ease;
+}
+.tts-result h3 { font-size: 15px; margin-bottom: 12px; }
+#tts-audio { width: 100%; border-radius: 10px; }
+.tts-result .actions { margin-top: 14px; }
+
 /* ---------- admin ---------- */
 .admin-wrap { padding-top: 24px; }
 .admin-title { font-size: 28px; font-weight: 800; margin-bottom: 20px; }

@@ -534,6 +534,100 @@ app.delete("/api/admin/downloads/:id", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* API: text-to-speech (edge-tts — free neural voices)                 */
+/* ------------------------------------------------------------------ */
+
+let voiceCache = null; // fetched once, then kept in memory
+
+app.get("/api/tts/voices", async (req, res) => {
+  try {
+    if (!voiceCache) {
+      const { spawnSync } = require("child_process");
+      const out = spawnSync("python", ["-m", "edge_tts", "--list-voices"], { windowsHide: true, timeout: 30000 });
+      if (out.status !== 0) throw new Error(out.stderr.toString() || "edge-tts failed");
+      const voices = [];
+      for (const line of out.stdout.toString().split(/\r?\n/)) {
+        const cols = line.trim().split(/\s{2,}/); // table columns separated by 2+ spaces
+        if (cols.length < 2) continue;
+        const name = cols[0];
+        // Voice names look like: en-US-GuyNeural, af-ZA-AdriNeural …
+        const localeMatch = /^([a-z]{2,3}-[A-Za-z0-9]{2,8})-/.exec(name);
+        if (!localeMatch || name.startsWith("Name")) continue;
+        voices.push({
+          id: name,
+          gender: (cols[1] || "").toLowerCase(),
+          locale: localeMatch[1],
+        });
+      }
+      if (!voices.length) throw new Error("no voices returned");
+      voiceCache = voices;
+    }
+    res.json(voiceCache);
+  } catch (err) {
+    res.status(500).json({ error: `Could not load voices: ${String(err.message || err)}` });
+  }
+});
+
+app.post("/api/tts", async (req, res) => {
+  const { text, voice = "en-US-GuyNeural" } = req.body || {};
+
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "Please enter some text." });
+  }
+  if (text.length > 3000) {
+    return res.status(400).json({ error: "Text is too long (max 3000 characters)." });
+  }
+  if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) {
+    return res.status(400).json({ error: "Invalid voice." });
+  }
+
+  // Light rate limit in public mode (30 generations / hour per IP)
+  if (MODE === "public") {
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+    const now = Date.now();
+    const hits = (rateHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+    if (hits.length >= 30) {
+      return res.status(429).json({ error: "Too many requests from your network — try again later." });
+    }
+    hits.push(now);
+    rateHits.set(ip, hits);
+  }
+
+  const tmpFile = path.join(
+    MODE === "local" ? LOCAL_DIR : TEMP_DIR,
+    `tts-${crypto.randomBytes(6).toString("hex")}.mp3`
+  );
+
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn("python", [
+        "-m", "edge_tts",
+        "--voice", voice,
+        "--text", text,
+        "--write-media", tmpFile,
+      ], { windowsHide: true });
+
+      let stderr = "";
+      proc.stderr.on("data", (c) => { stderr += c.toString(); });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        if (code === 0 && fs.existsSync(tmpFile)) resolve();
+        else reject(new Error(stderr.trim() || `edge-tts exited with code ${code}`));
+      });
+    });
+
+    // Stream to the user's device, then delete the server copy (public mode)
+    res.download(tmpFile, `speech-${voice}.mp3`, (err) => {
+      if (err && !res.headersSent) res.status(500).end();
+      if (MODE === "public") { try { fs.unlinkSync(tmpFile); } catch {} }
+    });
+  } catch (err) {
+    try { fs.unlinkSync(tmpFile); } catch {}
+    res.status(500).json({ error: `Speech generation failed: ${String(err.message || err).slice(0, 200)}` });
+  }
+});
+
+/* ------------------------------------------------------------------ */
 
 app.listen(PORT, () => {
   console.log(`\n  own downloader [${MODE}]  ->  http://localhost:${PORT}`);

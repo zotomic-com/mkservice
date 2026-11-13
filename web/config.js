@@ -10,9 +10,8 @@
  *   3. SUPABASE_ANON_KEY-> Supabase > Settings > API > anon public key
  */
 const CONFIG = {
-  // Backend (download engine). Local dev: http://localhost:3000
-  // PUBLIC: replace with your Railway URL once the backend is deployed.
-  API_URL: "http://localhost:3000",
+  // Backend (download engine) — deployed on Render
+  API_URL: "https://freedownloder-api.onrender.com",
 
   // Supabase (public values only — safe to ship to the browser)
   SUPABASE_URL: "https://cqezvhutoiowqbxisonb.supabase.co",

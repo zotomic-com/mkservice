@@ -135,14 +135,23 @@ function formatDuration(seconds) {
 
 function friendlyError(msg, url) {
   const m = msg.toLowerCase();
+  if (m.includes("sign in to confirm") || m.includes("not a bot")) {
+    return "YouTube is asking this server to prove it's not a bot for this video. Please try again in a minute or pick a different quality/link.";
+  }
+  if (m.includes("not available") || m.includes("video unavailable") || m.includes("unavailable") || m.includes("removed")) {
+    return "This video is unavailable — it may be deleted, private, region-locked, or the link is wrong.";
+  }
+  if (m.includes("does not exist") || m.includes("not exist") || m.includes("invalid video id")) {
+    return "That video doesn't exist. Double-check the link.";
+  }
   if (m.includes("private") || m.includes("login required") || m.includes("rate-limit") || m.includes("cookies")) {
     return "This content is private or requires login. Public posts work; private ones cannot be downloaded.";
   }
+  if (m.includes("age") && (m.includes("restrict") || m.includes("confirm"))) {
+    return "This video is age-restricted and can't be downloaded anonymously.";
+  }
   if (m.includes("not a valid url") || m.includes("unsupported url")) {
     return "That link doesn't look like a supported video URL.";
-  }
-  if (m.includes("video unavailable") || m.includes("removed")) {
-    return "This video is unavailable or has been removed.";
   }
   if (m.includes("geo") || m.includes("country")) {
     return "This video is blocked in your country/region.";

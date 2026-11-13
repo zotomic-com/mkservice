@@ -84,6 +84,8 @@ const Auth = {
 /* Sidebar auth area                                                   */
 /* ------------------------------------------------------------------ */
 
+const LOGOUT_SVG = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+
 function renderAuthArea() {
   const area = document.getElementById("auth-area");
   const adminLink = document.getElementById("nav-admin");
@@ -105,14 +107,16 @@ function renderAuthArea() {
 
   const initial = (Auth.name || Auth.user.email || "A").trim().charAt(0).toUpperCase();
   area.innerHTML = `
-    <div class="side-user">
-      <span class="avatar">${escapeHtml(initial)}</span>
-      <div class="side-user-meta">
-        <strong>${escapeHtml(Auth.name || "Account")}</strong>
-        <span>${escapeHtml(Auth.user.email || "")}</span>
+    <div class="side-foot-row">
+      <div class="side-user">
+        <span class="avatar">${escapeHtml(initial)}</span>
+        <div class="side-user-meta">
+          <strong>${escapeHtml(Auth.name || "Account")}</strong>
+          <span>${escapeHtml(Auth.user.email || "")}</span>
+        </div>
       </div>
+      <button id="signout-btn" class="icon-round logout" title="Sign out" aria-label="Sign out">${LOGOUT_SVG}</button>
     </div>
-    <button id="signout-btn" class="btn text full">Sign out</button>
   `;
   document.getElementById("signout-btn")?.addEventListener("click", Auth.signOut.bind(Auth));
 }

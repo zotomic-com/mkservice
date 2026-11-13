@@ -69,7 +69,43 @@ body {
   color: transparent;
 }
 
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+.icon-round {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 10px;
+  width: 34px; height: 34px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all .15s;
+  padding: 0;
+}
+.icon-round:hover { color: var(--text); border-color: var(--accent); }
+.icon-round.logout:hover { color: var(--bad); border-color: var(--bad); }
+
 .side-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+
+.sidebar-toggle {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 60;
+}
+
+body.side-collapsed .sidebar { display: none; }
+
+.side-foot-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.side-foot-row .side-user { flex: 1; min-width: 0; }
+
+@media (max-width: 800px) {
+  body.side-collapsed .main { padding-top: 70px; }
+}
 
 .nav-item {
   display: flex;

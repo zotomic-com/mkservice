@@ -38,6 +38,22 @@ function formatBytes(bytes) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sidebar collapse / open toggle                                      */
+/* ------------------------------------------------------------------ */
+
+const SIDE_KEY = "mk_side_collapsed";
+
+function setSideCollapsed(collapsed) {
+  document.body.classList.toggle("side-collapsed", collapsed);
+  document.getElementById("side-open")?.classList.toggle("hidden", !collapsed);
+  try { localStorage.setItem(SIDE_KEY, collapsed ? "1" : "0"); } catch {}
+}
+
+document.getElementById("side-close")?.addEventListener("click", () => setSideCollapsed(true));
+document.getElementById("side-open")?.addEventListener("click", () => setSideCollapsed(false));
+if (localStorage.getItem(SIDE_KEY) === "1") setSideCollapsed(true);
+
+/* ------------------------------------------------------------------ */
 /* Sidebar navigation                                                  */
 /* ------------------------------------------------------------------ */
 

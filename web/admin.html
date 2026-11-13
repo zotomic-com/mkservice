@@ -11,19 +11,26 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
-      <a class="brand" href="index.html">MK<span>service</span></a>
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <a class="brand" href="index.html">MK<span>service</span></a>
+        <button id="side-close" class="icon-round" title="Hide menu">☰</button>
+      </div>
       <nav class="side-nav">
         <a class="nav-item" href="index.html"><span class="ico">⬇</span> Downloads</a>
         <a class="nav-item" href="index.html#tts"><span class="ico">🔊</span> Audio</a>
         <a class="nav-item active" href="admin.html"><span class="ico">🛡</span> Admin</a>
       </nav>
       <div class="sidebar-foot">
-        <div class="side-user">
-          <span class="avatar">A</span>
-          <div class="side-user-meta"><strong>Admin</strong><span id="admin-email"></span></div>
+        <div class="side-foot-row">
+          <div class="side-user">
+            <span class="avatar">A</span>
+            <div class="side-user-meta"><strong>Admin</strong><span id="admin-email"></span></div>
+          </div>
+          <button id="signout-btn" class="icon-round logout hidden" title="Sign out" aria-label="Sign out">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
         </div>
-        <button id="signout-btn" class="btn text full hidden">Sign out</button>
       </div>
     </aside>
 
@@ -95,6 +102,8 @@
     </main>
   </div>
 
+  <button id="side-open" class="sidebar-toggle hidden" title="Show menu">☰</button>
+
   <!-- Add / edit user modal -->
   <div id="user-modal" class="modal-backdrop hidden">
     <div class="modal">
@@ -132,6 +141,17 @@
   <script src="admin.js"></script>
   <script>
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+    // Sidebar collapse toggle (same behavior as the main app)
+    const SIDE_KEY = "mk_side_collapsed";
+    function setSideCollapsed(collapsed) {
+      document.body.classList.toggle("side-collapsed", collapsed);
+      document.getElementById("side-open")?.classList.toggle("hidden", !collapsed);
+      try { localStorage.setItem(SIDE_KEY, collapsed ? "1" : "0"); } catch {}
+    }
+    document.getElementById("side-close")?.addEventListener("click", () => setSideCollapsed(true));
+    document.getElementById("side-open")?.addEventListener("click", () => setSideCollapsed(false));
+    if (localStorage.getItem(SIDE_KEY) === "1") setSideCollapsed(true);
   </script>
 </body>
 </html>

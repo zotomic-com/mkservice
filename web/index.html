@@ -13,8 +13,11 @@
 <body>
   <div class="app">
     <!-- ================= SIDEBAR ================= -->
-    <aside class="sidebar">
-      <a class="brand" href="index.html">MK<span>service</span></a>
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <a class="brand" href="index.html">MK<span>service</span></a>
+        <button id="side-close" class="icon-round" title="Hide menu">☰</button>
+      </div>
 
       <nav class="side-nav">
         <button class="nav-item active" data-pane="dl"><span class="ico">⬇</span> Downloads</button>
@@ -30,7 +33,6 @@
         </p>
       </div>
     </aside>
-
     <!-- ================= MAIN ================= -->
     <main class="main">
 
@@ -184,6 +186,9 @@
       </footer>
     </main>
   </div>
+
+  <!-- floating button to re-open a collapsed sidebar -->
+  <button id="side-open" class="sidebar-toggle hidden" title="Show menu">☰</button>
 
   <!-- Auth modal -->
   <div id="auth-modal" class="modal-backdrop hidden">

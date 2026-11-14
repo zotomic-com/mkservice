@@ -34,6 +34,58 @@ if (MODE === "public") {
 }
 
 /* ------------------------------------------------------------------ */
+/* Zotomic access control (public mode only).                          */
+/* Set API_KEY + TICKET_SECRET env vars to lock the engine down:       */
+/*   - /api/info, /api/download, /api/tts, /api/tts/voices require     */
+/*     the X-API-Key header (Zotomic's server holds the key).          */
+/*   - /api/progress/:id and /api/file/:id accept either the API key   */
+/*     or a short-lived signed ticket (?t=<exp>.<hmac>) that Zotomic   */
+/*     issues per download job, so the user's browser can fetch the    */
+/*     file directly without the key ever leaving the server.          */
+/* With neither env var set the engine stays open (previous behaviour).*/
+/* ------------------------------------------------------------------ */
+
+const API_KEY = process.env.API_KEY || "";
+const TICKET_SECRET = process.env.TICKET_SECRET || "";
+const KEYED_ENDPOINTS = ["/api/info", "/api/download", "/api/tts"];
+
+function validTicket(jobId, ticket) {
+  if (!TICKET_SECRET || !ticket) return false;
+  const [expRaw, mac] = String(ticket).split(".");
+  const exp = Number(expRaw);
+  if (!exp || !mac || exp < Date.now()) return false;
+  const expected = crypto
+    .createHmac("sha256", TICKET_SECRET)
+    .update(`${jobId}.${exp}`)
+    .digest("base64url");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+if (MODE === "public") {
+  app.use((req, res, next) => {
+    const p = req.path;
+    if (p === "/api/config") return next();
+    if (p.startsWith("/api/tts/voices") || KEYED_ENDPOINTS.includes(p)) {
+      if (API_KEY && req.headers["x-api-key"] !== API_KEY) {
+        return res.status(401).json({ error: "Unauthorized." });
+      }
+      return next();
+    }
+    if (p.startsWith("/api/progress/") || p.startsWith("/api/file/")) {
+      if (API_KEY && req.headers["x-api-key"] === API_KEY) return next();
+      const jobId = p.split("/")[3] || "";
+      if (validTicket(jobId, req.query.t)) return next();
+      return res.status(403).json({ error: "Invalid or expired ticket." });
+    }
+    next();
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Directories                                                         */
 /* ------------------------------------------------------------------ */
 

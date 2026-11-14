@@ -17,6 +17,7 @@ const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const http = require("http");
 const crypto = require("crypto");
 
 const MODE = (process.env.MODE || "local").toLowerCase(); // "local" | "public"
@@ -47,7 +48,7 @@ if (MODE === "public") {
 
 const API_KEY = process.env.API_KEY || "";
 const TICKET_SECRET = process.env.TICKET_SECRET || "";
-const KEYED_ENDPOINTS = ["/api/info", "/api/download", "/api/tts"];
+const KEYED_ENDPOINTS = ["/api/info", "/api/download", "/api/tts", "/api/pot-status"];
 
 function validTicket(jobId, ticket) {
   if (!TICKET_SECRET || !ticket) return false;
@@ -151,10 +152,17 @@ function ytdlpArgs(extra = []) {
 
 /* YouTube sometimes serves degraded responses to cloud IPs.
  * Retrying with alternative player clients usually recovers.
- * (Order matters: later entries are more aggressive workarounds.
- * android_vr needs no PO token and often works from datacenter IPs.) */
-const YT_CLIENTS = ["default", "tv", "android_vr", "mweb", "tv,web_safari,mweb"];
-const YT_FALLBACKS = YT_CLIENTS.map((c) => ["--extractor-args", `youtube:player_client=${c}`]);
+ * With login cookies the default (web) client is what YouTube expects —
+ * logged-out-only clients (android_vr/mweb) can return empty format
+ * lists when cookies are supplied, so they are tried last/never. */
+const YT_CLIENTS_NO_COOKIES = ["default", "tv", "android_vr", "mweb", "tv,web_safari,mweb"];
+const YT_CLIENTS_WITH_COOKIES = ["default", "tv", "web_safari", "mweb"];
+function ytClients() {
+  return process.env.YTDLP_COOKIES ? YT_CLIENTS_WITH_COOKIES : YT_CLIENTS_NO_COOKIES;
+}
+function ytFallbacks() {
+  return ytClients().map((c) => ["--extractor-args", `youtube:player_client=${c}`]);
+}
 
 /* Optional login cookies (env var YTDLP_COOKIES, Netscape format) —
  * set via the hosting dashboard, never stored in code */
@@ -180,7 +188,8 @@ function proxyArgs() {
 
 async function fetchVideoInfo(url) {
   let lastErr;
-  for (const fallback of YT_FALLBACKS) {
+  const fallbacks = ytFallbacks();
+  for (const fallback of fallbacks) {
     try {
       return await runYtDlp([
         "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "15",
@@ -275,6 +284,18 @@ app.get("/api/config", (req, res) => {
   res.json({ mode: MODE });
 });
 
+/* API: PO-token provider status (diagnostics, API-key protected) */
+app.get("/api/pot-status", async (req, res) => {
+  const provider = await checkPotProvider();
+  res.json({
+    provider,
+    providerBuilt: fs.existsSync(BGUTIL_SERVER),
+    cookies: Boolean(process.env.YTDLP_COOKIES),
+    proxy: Boolean(process.env.YTDLP_PROXY),
+    clients: ytClients(),
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* API: fetch video info                                               */
 /* ------------------------------------------------------------------ */
@@ -358,7 +379,7 @@ function startJob(url, mode, qualityId) {
   }
 
   const isYT = /youtube|youtu\.be/i.test(url);
-  const clients = isYT ? YT_CLIENTS : [null];
+  const clients = isYT ? ytClients() : [null];
   let attempt = 0;
   let proc = null;
   let stdoutBuf = "";
@@ -456,7 +477,8 @@ function startJob(url, mode, qualityId) {
           attempt += 1;
           launch();
         } else {
-          finishError(lastErr);
+          const tag = clients[attempt] && isYT ? ` [player client: ${clients[attempt]}]` : "";
+          finishError(lastErr + tag);
         }
       }
     });
@@ -824,12 +846,31 @@ app.post("/api/tts", async (req, res) => {
  * is installed via pip and talks to this server on 127.0.0.1:4416.      */
 
 const BGUTIL_SERVER = "/opt/bgutil/server/build/main.js";
+let potProviderOk = false;
+
+/** Is the bgutil PO-token provider responding on 127.0.0.1:4416? */
+function checkPotProvider(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const req = http.get("http://127.0.0.1:4416/ping", { timeout: timeoutMs }, (res) => {
+      res.resume();
+      potProviderOk = res.statusCode === 200;
+      resolve(potProviderOk);
+    });
+    req.on("timeout", () => { req.destroy(); potProviderOk = false; resolve(false); });
+    req.on("error", () => { potProviderOk = false; resolve(false); });
+  });
+}
+
 if (MODE === "public" && fs.existsSync(BGUTIL_SERVER)) {
   try {
     spawn("node", [BGUTIL_SERVER, "--host", "127.0.0.1", "--port", "4416"], {
       stdio: "ignore",
     }).unref();
     console.log("[pot] bgutil PO token provider starting on 127.0.0.1:4416");
+    setTimeout(async () => {
+      const ok = await checkPotProvider(3000);
+      console.log(`[pot] provider ${ok ? "responding" : "NOT responding — yt-dlp will lack PO tokens"}`);
+    }, 3000);
   } catch (err) {
     console.error("[pot] could not start bgutil provider:", String(err.message || err));
   }

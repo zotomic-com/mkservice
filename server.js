@@ -150,12 +150,10 @@ function ytdlpArgs(extra = []) {
 }
 
 /* YouTube sometimes serves degraded responses to cloud IPs.
- * Retrying with alternative player clients usually recovers. */
-const YT_FALLBACKS = [
-  [],
-  ["--extractor-args", "youtube:player_client=tv"],
-  ["--extractor-args", "youtube:player_client=tv,web_safari,mweb"],
-];
+ * Retrying with alternative player clients usually recovers.
+ * (Order matters: later entries are more aggressive workarounds.) */
+const YT_CLIENTS = ["default", "tv", "tv,web_safari,mweb"];
+const YT_FALLBACKS = YT_CLIENTS.map((c) => ["--extractor-args", `youtube:player_client=${c}`]);
 
 /* Optional login cookies (env var YTDLP_COOKIES, Netscape format) —
  * set via the hosting dashboard, never stored in code */
@@ -171,12 +169,21 @@ function cookiesArgs() {
   }
 }
 
+/* Optional outbound proxy (env var YTDLP_PROXY, e.g. http://user:pass@host:port)
+ * — routes yt-dlp traffic through a residential/ISP proxy to avoid
+ * datacenter IP bot checks. */
+function proxyArgs() {
+  const proxy = process.env.YTDLP_PROXY;
+  return proxy ? ["--proxy", proxy] : [];
+}
+
 async function fetchVideoInfo(url) {
   let lastErr;
   for (const fallback of YT_FALLBACKS) {
     try {
       return await runYtDlp([
         "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "15",
+        ...proxyArgs(),
         ...cookiesArgs(),
         ...fallback,
         url,
@@ -335,7 +342,7 @@ function startJob(url, mode, qualityId) {
     : `${job.id}-%(title).80s.%(ext)s`;
   const outDir = MODE === "local" ? LOCAL_DIR : TEMP_DIR;
 
-  const args = [
+  const baseArgs = [
     "--newline", "--no-warnings", "--no-playlist", "--restrict-filenames", "--no-mtime",
     "-o", path.join(outDir, fileTemplate),
     "--print", "after_move:filepath",
@@ -344,22 +351,52 @@ function startJob(url, mode, qualityId) {
   ];
 
   if (mode === "audio") {
-    args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+    baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
   } else {
-    args.push("--merge-output-format", "mp4", "-S", "ext:mp4:m4a");
+    baseArgs.push("--merge-output-format", "mp4", "-S", "ext:mp4:m4a");
   }
 
-  // YouTube cloud-IP workaround: try the tv client first when the default fails
-  if (/youtube|youtu\.be/i.test(url)) {
-    args.push("--extractor-args", "youtube:player_client=tv,default");
-  }
+  const isYT = /youtube|youtu\.be/i.test(url);
+  const clients = isYT ? YT_CLIENTS : [null];
+  let attempt = 0;
+  let proc = null;
+  let stdoutBuf = "";
+  let stderrMsg = "";
 
-  args.push(...cookiesArgs());
-  args.push(url);
+  const resolveFile = () => {
+    if (!job.filename) {
+      try {
+        let files = fs.readdirSync(outDir)
+          .map((f) => ({ f, t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+          .sort((a, b) => b.t - a.t);
+        if (MODE === "public") files = files.filter((x) => x.f.startsWith(`${job.id}-`));
+        if (files[0]) job.filename = files[0].f;
+      } catch {}
+    }
+    const resolved = path.join(outDir, path.basename(job.filename || ""));
+    if (fs.existsSync(resolved)) {
+      job.filepath = resolved;
+      job.size = fs.statSync(resolved).size;
+    }
+  };
 
-  const proc = spawnYtDlp(args);
-  job.proc = proc;
-  job.status = "downloading";
+  const finishError = (msg) => {
+    job.status = "error";
+    job.error = msg;
+  };
+
+  /* YouTube bot-check errors are worth one more shot with a different
+   * player client; everything else (private/geo/removed) is not. */
+  const isRetryable = (msg) => {
+    const m = msg.toLowerCase();
+    return (
+      m.includes("sign in to confirm") ||
+      m.includes("not a bot") ||
+      m.includes("player client") ||
+      m.includes("precondition check failed") ||
+      m.includes("requested format")
+    );
+  };
 
   const handleLine = (line) => {
     const prog = /\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\w+)(?:\s+at\s+([\d.]+\w+\/s))?(?:\s+ETA\s+(\S+))?/.exec(line);
@@ -380,48 +417,51 @@ function startJob(url, mode, qualityId) {
     }
   };
 
-  let stdoutBuf = "";
-  proc.stdout.on("data", (chunk) => {
-    stdoutBuf += chunk.toString();
-    const parts = stdoutBuf.split(/\r?\n/);
-    stdoutBuf = parts.pop();
-    parts.forEach((l) => l && handleLine(l));
-  });
+  const launch = () => {
+    const args = [...baseArgs];
+    if (clients[attempt]) args.push("--extractor-args", `youtube:player_client=${clients[attempt]}`);
+    args.push(...proxyArgs(), ...cookiesArgs(), url);
 
-  let stderrMsg = "";
-  proc.stderr.on("data", (c) => { stderrMsg += c.toString(); });
+    stderrMsg = "";
+    stdoutBuf = "";
+    job.filename = "";
+    proc = spawnYtDlp(args);
+    job.proc = proc;
+    job.status = "downloading";
+    if (attempt > 0) job.note = `retrying with YouTube player client: ${clients[attempt]}`;
 
-  proc.on("error", (err) => {
-    job.status = "error";
-    job.error = String(err.message || err);
-  });
+    proc.stdout.on("data", (chunk) => {
+      stdoutBuf += chunk.toString();
+      const parts = stdoutBuf.split(/\r?\n/);
+      stdoutBuf = parts.pop();
+      parts.forEach((l) => l && handleLine(l));
+    });
 
-  proc.on("close", (code) => {
-    if (stdoutBuf.trim()) handleLine(stdoutBuf.trim());
-    if (code === 0) {
-      job.status = "done";
-      job.percent = 100;
-      // Resolve the real output file
-      if (!job.filename) {
-        try {
-          let files = fs.readdirSync(outDir)
-            .map((f) => ({ f, t: fs.statSync(path.join(outDir, f)).mtimeMs }))
-            .sort((a, b) => b.t - a.t);
-          if (MODE === "public") files = files.filter((x) => x.f.startsWith(`${job.id}-`));
-          if (files[0]) job.filename = files[0].f;
-        } catch {}
+    proc.stderr.on("data", (c) => { stderrMsg += c.toString(); });
+
+    proc.on("error", (err) => {
+      finishError(String(err.message || err));
+    });
+
+    proc.on("close", (code) => {
+      if (stdoutBuf.trim()) handleLine(stdoutBuf.trim());
+      if (code === 0) {
+        job.status = "done";
+        job.percent = 100;
+        resolveFile();
+      } else {
+        const lastErr = stderrMsg.trim().split("\n").slice(-3).join("\n") || `yt-dlp exited with code ${code}`;
+        if (attempt < clients.length - 1 && isRetryable(lastErr)) {
+          attempt += 1;
+          launch();
+        } else {
+          finishError(lastErr);
+        }
       }
-      const resolved = path.join(outDir, path.basename(job.filename || ""));
-      if (fs.existsSync(resolved)) {
-        job.filepath = resolved;
-        job.size = fs.statSync(resolved).size;
-      }
-    } else {
-      job.status = "error";
-      job.error = stderrMsg.trim().split("\n").slice(-3).join("\n") || `yt-dlp exited with code ${code}`;
-    }
-  });
+    });
+  };
 
+  launch();
   return job;
 }
 
@@ -777,6 +817,22 @@ app.post("/api/tts", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* PO token provider (bgutil) — only in the container. Generates YouTube
+ * proof-of-origin tokens so downloads from datacenter IPs are far less
+ * likely to hit "Sign in to confirm you're not a bot". The yt-dlp plugin
+ * is installed via pip and talks to this server on 127.0.0.1:4416.      */
+
+const BGUTIL_SERVER = "/opt/bgutil/server/build/main.js";
+if (MODE === "public" && fs.existsSync(BGUTIL_SERVER)) {
+  try {
+    spawn("node", [BGUTIL_SERVER, "--host", "127.0.0.1", "--port", "4416"], {
+      stdio: "ignore",
+    }).unref();
+    console.log("[pot] bgutil PO token provider starting on 127.0.0.1:4416");
+  } catch (err) {
+    console.error("[pot] could not start bgutil provider:", String(err.message || err));
+  }
+}
 
 app.listen(PORT, () => {
   console.log(`\n  own downloader [${MODE}]  ->  http://localhost:${PORT}`);

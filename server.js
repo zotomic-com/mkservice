@@ -151,8 +151,9 @@ function ytdlpArgs(extra = []) {
 
 /* YouTube sometimes serves degraded responses to cloud IPs.
  * Retrying with alternative player clients usually recovers.
- * (Order matters: later entries are more aggressive workarounds.) */
-const YT_CLIENTS = ["default", "tv", "tv,web_safari,mweb"];
+ * (Order matters: later entries are more aggressive workarounds.
+ * android_vr needs no PO token and often works from datacenter IPs.) */
+const YT_CLIENTS = ["default", "tv", "android_vr", "mweb", "tv,web_safari,mweb"];
 const YT_FALLBACKS = YT_CLIENTS.map((c) => ["--extractor-args", `youtube:player_client=${c}`]);
 
 /* Optional login cookies (env var YTDLP_COOKIES, Netscape format) —

@@ -999,16 +999,19 @@ function startVideoJob(text, voice, style) {
       const s = VIDEO_STYLES[style];
       // cwd = output dir so the ass filter arg needs no absolute path
       // (colons in Windows drive letters break ffmpeg filter parsing)
+      // 540x960 (libass scales the 720x1280 PlayRes) + tiny x264 buffers keep
+      // memory far under the Render free instance's 512MB limit.
       const args = [
         "-y",
         "-i", audio,
         "-f", "lavfi", "-i",
-        `gradients=s=720x1280:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
-        // fps=12 + capped threads keep memory low (Render free instance OOM-kills otherwise)
-        "-vf", `fps=12,ass=${path.basename(ass)}:fontsdir=/usr/share/fonts,format=yuv420p`,
+        `gradients=s=540x960:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
+        "-vf", `fps=10,ass=${path.basename(ass)},format=yuv420p`,
         "-map", "1:v", "-map", "0:a",
         "-shortest",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-threads", "2",
+        "-x264-params", "rc-lookahead=0:bframes=0",
+        "-filter_threads", "1",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         out,

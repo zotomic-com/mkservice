@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Download engine + text-to-speech + yt-dlp PO-token plugin (bgutil)
-RUN pip install --no-cache-dir -U yt-dlp edge-tts bgutil-ytdlp-pot-provider
+# yt-dlp[default] includes the yt-dlp-ejs challenge solver scripts
+RUN pip install --no-cache-dir -U "yt-dlp[default]" edge-tts bgutil-ytdlp-pot-provider
 
 # bgutil provider HTTP server (started by server.js on 127.0.0.1:4416)
 RUN git clone --single-branch --depth 1 --branch 2.0.2 \

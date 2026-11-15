@@ -147,16 +147,18 @@ function isAllowedUrl(raw) {
 /* ------------------------------------------------------------------ */
 
 function ytdlpArgs(extra = []) {
-  return ["-m", "yt_dlp", ...extra];
+  // node must be explicitly enabled as the JS runtime for YouTube's
+  // n-challenge solving (deno is default-enabled, node is not)
+  return ["-m", "yt_dlp", "--js-runtimes", "node", ...extra];
 }
 
 /* YouTube sometimes serves degraded responses to cloud IPs.
  * Retrying with alternative player clients usually recovers.
- * With login cookies the default (web) client is what YouTube expects —
- * logged-out-only clients (android_vr/mweb) can return empty format
- * lists when cookies are supplied, so they are tried last/never. */
+ * With login cookies the working combination (Nov 2026) is
+ * web_safari/web_embedded + the ejs n-challenge solver + PO tokens,
+ * and tv_downgraded excluded (yt-dlp bug #17389). */
 const YT_CLIENTS_NO_COOKIES = ["default", "tv", "android_vr", "mweb", "tv,web_safari,mweb"];
-const YT_CLIENTS_WITH_COOKIES = ["default", "tv", "web_safari", "mweb"];
+const YT_CLIENTS_WITH_COOKIES = ["web_safari,web_embedded,-tv_downgraded", "default,-tv_downgraded", "mweb"];
 function ytClients() {
   return process.env.YTDLP_COOKIES ? YT_CLIENTS_WITH_COOKIES : YT_CLIENTS_NO_COOKIES;
 }

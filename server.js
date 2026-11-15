@@ -897,26 +897,6 @@ function videoBusyCount() {
   ).length;
 }
 
-/** Parse a WebVTT with one word per cue into [{ w, start, end }] (seconds). */
-function parseVttWords(vtt) {
-  const words = [];
-  const re = /(\d+):(\d+):([\d.]+)\s*-->\s*(\d+):(\d+):([\d.]+)/;
-  for (const block of vtt.replace(/\r/g, "").split(/\n\n+/)) {
-    const lines = block.split("\n").filter(Boolean);
-    for (let i = 0; i < lines.length; i++) {
-      const m = re.exec(lines[i]);
-      if (!m) continue;
-      const text = lines.slice(i + 1).join(" ").trim();
-      if (!text) continue;
-      const start = Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3]);
-      const end = Number(m[4]) * 3600 + Number(m[5]) * 60 + parseFloat(m[6]);
-      for (const w of text.split(/\s+/)) words.push({ w, start, end });
-      break;
-    }
-  }
-  return words;
-}
-
 function assTime(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -980,7 +960,7 @@ function startVideoJob(text, voice, style) {
   const dir = MODE === "local" ? LOCAL_DIR : TEMP_DIR;
   const base = path.join(dir, `vid-${job.id}`);
   const audio = `${base}.mp3`;
-  const vtt = `${base}.vtt`;
+  const wordsFile = `${base}.json`;
   const ass = `${base}.ass`;
   const out = path.join(dir, MODE === "local" ? `video-${job.id}.mp4` : `${job.id}-generated-video.mp4`);
   job.filename = path.basename(out);
@@ -988,16 +968,16 @@ function startVideoJob(text, voice, style) {
   let ff = null;
   let killed = false;
 
-  const cleanup = () => { for (const f of [audio, vtt, ass]) { try { fs.unlinkSync(f); } catch {} } };
+  const cleanup = () => { for (const f of [audio, wordsFile, ass]) { try { fs.unlinkSync(f); } catch {} } };
   const fail = (msg) => { job.status = "error"; job.error = msg; cleanup(); };
 
   (async () => {
     try {
-      // 1. Narration + per-word timing (edge-tts WebVTT, one word per cue)
+      // 1. Narration + per-word timing (edge-tts streaming API, WordBoundary)
       await new Promise((resolve, reject) => {
         const p = spawn("python", [
-          "-m", "edge_tts", "--voice", voice, "--text", text,
-          "--write-media", audio, "--write-subtitles", vtt, "--words-in-cue", "1",
+          path.join(__dirname, "scripts", "video_voice.py"),
+          text, voice, audio, wordsFile,
         ], { windowsHide: true });
         let err = "";
         p.stderr.on("data", (c) => { err += c.toString(); });
@@ -1009,7 +989,7 @@ function startVideoJob(text, voice, style) {
       });
 
       // 2. Karaoke captions
-      const words = parseVttWords(fs.readFileSync(vtt, "utf8"));
+      const words = JSON.parse(fs.readFileSync(wordsFile, "utf8"));
       if (!words.length) throw new Error("voice returned no word timings");
       fs.writeFileSync(ass, buildAss(words), "utf8");
       const dur = Math.max(words[words.length - 1].end + 1.2, 2);
@@ -1017,12 +997,14 @@ function startVideoJob(text, voice, style) {
       // 3. Render: animated gradient background + captions over the voice
       job.note = "Rendering the video…";
       const s = VIDEO_STYLES[style];
+      // cwd = output dir so the ass filter arg needs no absolute path
+      // (colons in Windows drive letters break ffmpeg filter parsing)
       const args = [
         "-y",
         "-i", audio,
         "-f", "lavfi", "-i",
         `gradients=s=720x1280:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
-        "-vf", `ass=${ass}:fontsdir=/usr/share/fonts,format=yuv420p`,
+        "-vf", `ass=${path.basename(ass)}:fontsdir=/usr/share/fonts,format=yuv420p`,
         "-map", "1:v", "-map", "0:a",
         "-shortest",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
@@ -1031,7 +1013,7 @@ function startVideoJob(text, voice, style) {
         out,
         "-progress", "pipe:1", "-nostats",
       ];
-      ff = spawn("ffmpeg", args, { windowsHide: true });
+      ff = spawn("ffmpeg", args, { windowsHide: true, cwd: dir });
       job.proc = ff;
 
       let buf = "";
@@ -1058,10 +1040,11 @@ function startVideoJob(text, voice, style) {
         if (code === 0 && fs.existsSync(out) && fs.statSync(out).size > 10_000) {
           job.status = "done";
           job.percent = 100;
+          job.filepath = out;
           job.size = fs.statSync(out).size;
           cleanup();
         } else {
-          fail(`Video rendering failed. Try again (maybe with a shorter script).${stderrTail ? ` [${stderrTail.slice(0, 160)}]` : ""}`);
+          fail(`Video rendering failed. Try again (maybe with a shorter script).${stderrTail ? ` [${stderrTail.slice(0, 500)}]` : ""}`);
         }
       });
     } catch (err) {

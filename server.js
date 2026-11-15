@@ -1004,10 +1004,11 @@ function startVideoJob(text, voice, style) {
         "-i", audio,
         "-f", "lavfi", "-i",
         `gradients=s=720x1280:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
-        "-vf", `ass=${path.basename(ass)}:fontsdir=/usr/share/fonts,format=yuv420p`,
+        // fps=12 + capped threads keep memory low (Render free instance OOM-kills otherwise)
+        "-vf", `fps=12,ass=${path.basename(ass)}:fontsdir=/usr/share/fonts,format=yuv420p`,
         "-map", "1:v", "-map", "0:a",
         "-shortest",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         out,

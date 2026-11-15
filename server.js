@@ -341,7 +341,9 @@ app.post("/api/info", async (req, res) => {
       qualities: options,
     });
   } catch (err) {
-    res.status(500).json({ error: friendlyError(String(err.message || err), url) });
+    const detail = String(err.message || err).trim().split("\n").slice(-6).join("\n").slice(0, 700);
+    console.error(`[info] ${url}: ${detail}`);
+    res.status(500).json({ error: friendlyError(String(err.message || err), url), detail });
   }
 });
 

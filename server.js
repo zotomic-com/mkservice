@@ -97,11 +97,17 @@ if (MODE === "local") {
 } else {
   if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
   setInterval(() => {
-    // Safety net: purge any orphaned temp files older than 1 hour
+    // Safety net: purge orphaned temp files. Generated videos stay
+    // downloadable for 24h; everything else for 1 hour.
     try {
       for (const f of fs.readdirSync(TEMP_DIR)) {
         const p = path.join(TEMP_DIR, f);
-        if (Date.now() - fs.statSync(p).mtimeMs > 60 * 60 * 1000) fs.unlinkSync(p);
+        const maxAge = /-generated-video\.mp4$/.test(f) ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+        if (Date.now() - fs.statSync(p).mtimeMs > maxAge) {
+          fs.unlinkSync(p);
+          const m = /^([0-9a-f]{16})-generated-video\.mp4$/.exec(f);
+          if (m) jobs.delete(m[1]);
+        }
       }
     } catch {}
   }, 10 * 60 * 1000).unref();
@@ -120,6 +126,36 @@ function createJob(url) {
   jobs.set(id, job);
   return job;
 }
+
+/**
+ * The job registry is in-memory, but a deploy / idle restart of the service
+ * would orphan finished generated videos. Re-attach them as done jobs so the
+ * download links keep working for the file's lifetime (24h, see purge below).
+ */
+function rebuildVideoJobs() {
+  const dir = MODE === "local" ? LOCAL_DIR : TEMP_DIR;
+  const re = MODE === "local" ? /^video-([0-9a-f]{16})\.mp4$/ : /^([0-9a-f]{16})-generated-video\.mp4$/;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const m = re.exec(f);
+      if (!m || jobs.has(m[1])) continue;
+      try {
+        const st = fs.statSync(path.join(dir, f));
+        if (!st.isFile() || st.size < 10_000) continue;
+        const job = createJob("");
+        job.kind = "video";
+        job.status = "done";
+        job.percent = 100;
+        job.title = "Generated video";
+        job.filepath = path.join(dir, f);
+        job.filename = f;
+        job.size = st.size;
+        job.note = "";
+      } catch {}
+    }
+  } catch {}
+}
+rebuildVideoJobs();
 
 /* ------------------------------------------------------------------ */
 /* URL validation                                                      */
@@ -534,8 +570,10 @@ app.get("/api/progress/:id", (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /* API: fetch the finished file                                        */
-/*   public mode: streams to the browser (user's own device), then     */
-/*   deletes the server copy — nothing is kept in any database.        */
+/*   downloader jobs: streams to the browser, then deletes the server  */
+/*   copy (one-shot, nothing kept). Generated videos stay available    */
+/*   for 24h so the inline preview and the Download button can both    */
+/*   fetch the same URL (and retries work).                            */
 /* ------------------------------------------------------------------ */
 
 app.get("/api/file/:id", (req, res) => {
@@ -549,9 +587,10 @@ app.get("/api/file/:id", (req, res) => {
   res.download(job.filepath, safeName, (err) => {
     if (err && !res.headersSent) {
       res.status(500).end();
+      return;
     }
-    // In public mode, delete the server copy right after the transfer
-    if (MODE === "public") {
+    // Downloader files are one-shot (privacy): delete right after transfer.
+    if (MODE === "public" && job.kind !== "video") {
       try { fs.unlinkSync(job.filepath); } catch {}
       jobs.delete(job.id);
     }

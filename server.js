@@ -48,7 +48,7 @@ if (MODE === "public") {
 
 const API_KEY = process.env.API_KEY || "";
 const TICKET_SECRET = process.env.TICKET_SECRET || "";
-const KEYED_ENDPOINTS = ["/api/info", "/api/download", "/api/tts", "/api/pot-status"];
+const KEYED_ENDPOINTS = ["/api/info", "/api/download", "/api/tts", "/api/video", "/api/pot-status"];
 
 function validTicket(jobId, ticket) {
   if (!TICKET_SECRET || !ticket) return false;
@@ -879,6 +879,214 @@ if (MODE === "public" && fs.existsSync(BGUTIL_SERVER)) {
     console.error("[pot] could not start bgutil provider:", String(err.message || err));
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* API: video generator — script → narrated vertical video             */
+/* (edge-tts word timings + ffmpeg animated background + karaoke caps) */
+/* ------------------------------------------------------------------ */
+
+const VIDEO_STYLES = {
+  ocean:  { c0: "0x0b1f3a", c1: "0x0e7a5f", name: "Ocean (navy → green)" },
+  sunset: { c0: "0x2b0a4d", c1: "0xc2410c", name: "Sunset (purple → orange)" },
+  night:  { c0: "0x111827", c1: "0x4b5563", name: "Night (charcoal)" },
+};
+
+function videoBusyCount() {
+  return [...jobs.values()].filter(
+    (j) => j.kind === "video" && (j.status === "starting" || j.status === "downloading")
+  ).length;
+}
+
+/** Parse a WebVTT with one word per cue into [{ w, start, end }] (seconds). */
+function parseVttWords(vtt) {
+  const words = [];
+  const re = /(\d+):(\d+):([\d.]+)\s*-->\s*(\d+):(\d+):([\d.]+)/;
+  for (const block of vtt.replace(/\r/g, "").split(/\n\n+/)) {
+    const lines = block.split("\n").filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      const m = re.exec(lines[i]);
+      if (!m) continue;
+      const text = lines.slice(i + 1).join(" ").trim();
+      if (!text) continue;
+      const start = Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3]);
+      const end = Number(m[4]) * 3600 + Number(m[5]) * 60 + parseFloat(m[6]);
+      for (const w of text.split(/\s+/)) words.push({ w, start, end });
+      break;
+    }
+  }
+  return words;
+}
+
+function assTime(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${s.toFixed(2).padStart(5, "0")}`;
+}
+
+/** Word timings → ASS with karaoke (\k) word-by-word yellow highlight. */
+function buildAss(words) {
+  const groups = [];
+  let group = [];
+  const flush = () => {
+    if (group.length) { groups.push(group); group = []; }
+  };
+  for (const w of words) {
+    if (group.length) {
+      const gap = w.start - group[group.length - 1].end;
+      if (group.length >= 5 || gap > 0.7 || w.w.length > 14) flush();
+    }
+    group.push(w);
+  }
+  flush();
+
+  let events = "";
+  for (const g of groups) {
+    const start = g[0].start;
+    const end = Math.max(g[g.length - 1].end + 0.3, start + 0.8);
+    let t = start;
+    let txt = "";
+    g.forEach((w, i) => {
+      const gapCs = i === 0 ? 0 : Math.max(0, Math.round((w.start - t) * 100));
+      const durCs = Math.max(1, Math.round((w.end - w.start) * 100));
+      txt += `${i > 0 ? " " : ""}${gapCs > 0 ? `{\\k${gapCs}}` : ""}{\\k${durCs}}${w.w}`;
+      t = w.end;
+    });
+    events += `Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${txt}\n`;
+  }
+
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Cap,DejaVu Sans,62,&H0000D7FF,&H00FFFFFF,&H00101010,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,40,40,210,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${events}`;
+}
+
+function startVideoJob(text, voice, style) {
+  const job = createJob("");
+  job.kind = "video";
+  job.status = "downloading";
+  job.title = "Generated video";
+  job.note = "Generating the voice…";
+
+  const dir = MODE === "local" ? LOCAL_DIR : TEMP_DIR;
+  const base = path.join(dir, `vid-${job.id}`);
+  const audio = `${base}.mp3`;
+  const vtt = `${base}.vtt`;
+  const ass = `${base}.ass`;
+  const out = path.join(dir, MODE === "local" ? `video-${job.id}.mp4` : `${job.id}-generated-video.mp4`);
+  job.filename = path.basename(out);
+
+  let ff = null;
+  let killed = false;
+
+  const cleanup = () => { for (const f of [audio, vtt, ass]) { try { fs.unlinkSync(f); } catch {} } };
+  const fail = (msg) => { job.status = "error"; job.error = msg; cleanup(); };
+
+  (async () => {
+    try {
+      // 1. Narration + per-word timing (edge-tts WebVTT, one word per cue)
+      await new Promise((resolve, reject) => {
+        const p = spawn("python", [
+          "-m", "edge_tts", "--voice", voice, "--text", text,
+          "--write-media", audio, "--write-subtitles", vtt, "--words-in-cue", "1",
+        ], { windowsHide: true });
+        let err = "";
+        p.stderr.on("data", (c) => { err += c.toString(); });
+        p.on("error", reject);
+        p.on("close", (code) =>
+          code === 0 && fs.existsSync(audio)
+            ? resolve()
+            : reject(new Error(err.trim().split("\n").slice(-2).join(" ") || "voice generation failed")));
+      });
+
+      // 2. Karaoke captions
+      const words = parseVttWords(fs.readFileSync(vtt, "utf8"));
+      if (!words.length) throw new Error("voice returned no word timings");
+      fs.writeFileSync(ass, buildAss(words), "utf8");
+      const dur = Math.max(words[words.length - 1].end + 1.2, 2);
+
+      // 3. Render: animated gradient background + captions over the voice
+      job.note = "Rendering the video…";
+      const s = VIDEO_STYLES[style];
+      const args = [
+        "-y",
+        "-i", audio,
+        "-f", "lavfi", "-i",
+        `gradients=s=720x1280:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
+        "-vf", `ass=${ass}:fontsdir=/usr/share/fonts,format=yuv420p`,
+        "-map", "1:v", "-map", "0:a",
+        "-shortest",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        out,
+        "-progress", "pipe:1", "-nostats",
+      ];
+      ff = spawn("ffmpeg", args, { windowsHide: true });
+      job.proc = ff;
+
+      let buf = "";
+      ff.stdout.on("data", (c) => {
+        buf += c.toString();
+        let last = 0;
+        const m = /out_time_ms=(\d+)/g;
+        let match;
+        while ((match = m.exec(buf))) last = Number(match[1]);
+        if (last) job.percent = Math.min(99, (last / 1e6 / dur) * 100);
+      });
+      let stderrTail = "";
+      ff.stderr.on("data", (c) => { stderrTail = (stderrTail + c.toString()).split("\n").slice(-4).join("\n"); });
+
+      const timer = setTimeout(() => {
+        killed = true;
+        try { ff.kill("SIGKILL"); } catch {}
+        fail("The video took too long to render. Try a shorter script.");
+      }, 10 * 60 * 1000);
+
+      ff.on("close", (code) => {
+        clearTimeout(timer);
+        if (killed) return;
+        if (code === 0 && fs.existsSync(out) && fs.statSync(out).size > 10_000) {
+          job.status = "done";
+          job.percent = 100;
+          job.size = fs.statSync(out).size;
+          cleanup();
+        } else {
+          fail(`Video rendering failed. Try again (maybe with a shorter script).${stderrTail ? ` [${stderrTail.slice(0, 160)}]` : ""}`);
+        }
+      });
+    } catch (err) {
+      fail(String(err.message || err).slice(0, 250));
+    }
+  })();
+
+  return job;
+}
+
+app.post("/api/video", (req, res) => {
+  const { text, voice = "en-US-GuyNeural", style = "ocean" } = req.body || {};
+  if (!text || typeof text !== "string" || text.trim().length < 10) {
+    return res.status(400).json({ error: "Please enter a script (at least 10 characters)." });
+  }
+  if (text.length > 1200) {
+    return res.status(400).json({ error: "Script is too long (1200 characters max — about 60 seconds of video)." });
+  }
+  if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
+  if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });
+  if (videoBusyCount() >= 2) {
+    return res.status(429).json({ error: "The video studio is busy — please try again in a moment." });
+  }
+  res.json({ jobId: startVideoJob(text.trim(), voice, style).id });
+});
 
 app.listen(PORT, () => {
   console.log(`\n  own downloader [${MODE}]  ->  http://localhost:${PORT}`);

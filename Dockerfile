@@ -6,7 +6,7 @@ FROM python:3.12-slim
 
 # git is needed to clone the PO-token provider; Node 22 required by it
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl ca-certificates git && \
+    ffmpeg curl ca-certificates git fonts-dejavu-core && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*

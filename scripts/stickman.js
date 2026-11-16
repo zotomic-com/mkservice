@@ -541,7 +541,7 @@ async function renderStickmanFrames(opts) {
     words.length ? words[words.length - 1].end : 0,
     scenes.length ? scenes[scenes.length - 1].end : 0,
   );
-  const duration = Math.min(Math.max(lastTime + 1.2, 2.5), 90); // hard cap 90s
+  const duration = Math.min(Math.max(lastTime + 1.2, 2.5), 60); // hard cap 60s
   const total = Math.ceil(duration * FPS);
   const groups = groupWords(words);
   const framesDir = opts.framesDir;

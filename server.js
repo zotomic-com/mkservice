@@ -1069,7 +1069,7 @@ function startVideoJob(text, voice, style, audioStyle = "") {
         `gradients=s=540x960:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
         "-vf", `fps=10,ass=${path.basename(ass)},format=yuv420p`,
         "-map", "1:v", "-map", "0:a",
-        "-shortest",
+        "-shortest", "-t", "60",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-threads", "2",
         "-x264-params", "rc-lookahead=0:bframes=0",
         "-filter_threads", "1",
@@ -1193,7 +1193,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
         timeline = [];
         const listLines = [];
         let cursor = 0;
-        for (let i = 0; i < storyScenes.length && cursor < 89; i++) {
+        for (let i = 0; i < storyScenes.length && cursor < 59; i++) {
           const sc = storyScenes[i];
           const start = cursor;
           const slotMp3 = path.join(partsDir, `slot-${i}.mp3`);
@@ -1216,7 +1216,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
           const narrLen = narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0;
           // narration lands at the storyboard time, but never before this slot
           const delay = Math.max(0, Math.min(sc.t0 - start, Math.max(0, sc.t1 - sc.t0 - narrLen)));
-          const end = Math.min(Math.max(sc.t1, start + delay + narrLen, start + 2), 90);
+          const end = Math.min(Math.max(sc.t1, start + delay + narrLen, start + 2), 60);
           const slotLen = end - start;
 
           if (narrWords.length) {
@@ -1330,7 +1330,7 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
     return res.status(400).json({ error: "Please enter a script (at least 10 characters)." });
   }
   if (text.length > 5000) {
-    return res.status(400).json({ error: "Script is too long (5000 characters max — about 60–90 seconds of video)." });
+    return res.status(400).json({ error: "Script is too long (5000 characters max — about 60 seconds of video)." });
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
   if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });

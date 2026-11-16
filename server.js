@@ -1283,6 +1283,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
             end,
             action: STICKMAN.matchAction(sc.visual) ?? STICKMAN.matchAction(sc.voiceover) ?? STICKMAN.pickAction("", i),
             title: (sc.title || "").slice(0, 60),
+            visual: (sc.visual || "").slice(0, 200),
             colors: sc.colors || "",
           });
           cursor = end;

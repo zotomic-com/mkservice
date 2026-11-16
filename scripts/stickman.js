@@ -816,12 +816,18 @@ const PROP_KEYS = {
   couch: ["watch", "watches", "tv", "couch", "sofa", "relax", "rest", "television"],
   desk: ["desk", "write", "writes", "writing", "work", "office", "laptop", "study", "notebook"],
 };
+/* The prop whose keyword appears FIRST in reading order wins, so "walks
+ * outside toward a tree ... morning sky" is a tree scene, not a bed. */
 function matchProp(text) {
   const t = String(text).toLowerCase();
+  let best = null;
   for (const [prop, keys] of Object.entries(PROP_KEYS)) {
-    if (keys.some((k) => t.includes(k))) return prop;
+    for (const k of keys) {
+      const at = t.indexOf(k);
+      if (at >= 0 && (!best || at < best.at)) best = { at, prop };
+    }
   }
-  return "";
+  return best ? best.prop : "";
 }
 
 /**
@@ -840,7 +846,7 @@ async function renderStickmanFrames(opts) {
     ...s,
     action: ACTIONS[s.action] ? s.action : "talk",
     bg: auto ? pickAutoBg(`${s.title || ""} ${s.colors || ""} ${s.action}`, i) : null,
-    prop: matchProp(`${s.title || ""} ${s.colors || ""}`),
+    prop: matchProp(`${s.title || ""} ${s.visual || ""} ${s.colors || ""}`),
   }));
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
@@ -940,4 +946,4 @@ function drawSceneTitle(ctx, title, u) {
   ctx.restore();
 }
 
-module.exports = { CHARACTERS, renderStickmanFrames, parseStoryScript, pickAction, matchAction };
+module.exports = { CHARACTERS, renderStickmanFrames, parseStoryScript, pickAction, matchAction, matchProp };

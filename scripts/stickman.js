@@ -43,6 +43,10 @@ const CHARACTERS = [
   { id: "bella", name: "Bella", color: "#db2777", accent: "#111827", accessory: "glasses" },
   { id: "rocky", name: "Rocky", color: "#ea580c", accent: "#7c2d12", accessory: "beanie" },
   { id: "zara", name: "Zara", color: "#0d9488", accent: "#115e59", accessory: "bun" },
+  { id: "nova", name: "Nova", color: "#f97316", accent: "#c2410c", accessory: "messy" },
+  { id: "kai", name: "Kai", color: "#4f46e5", accent: "#312e81", accessory: "curly" },
+  { id: "mia", name: "Mia", color: "#ec4899", accent: "#9d174d", accessory: "bangs" },
+  { id: "otto", name: "Otto", color: "#0ea5e9", accent: "#075985", accessory: "flat" },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -63,11 +67,14 @@ const STAND = {
 
 function mixPose(a, b, u) {
   const o = {};
-  for (const k of ["lean", "rot", "lift", "head"]) o[k] = lerp(a[k] ?? 0, b[k] ?? 0, u);
+  for (const k of ["lean", "rot", "lift", "head", "sx", "sy"]) {
+    const dflt = k === "sx" || k === "sy" ? 1 : 0;
+    o[k] = lerp(a[k] ?? dflt, b[k] ?? dflt, u);
+  }
   for (const k of ["armL", "armR", "legL", "legR"]) {
     o[k] = [lerp(a[k][0], b[k][0], u), lerp(a[k][1], b[k][1], u)];
   }
-  o.mood = u > 0.5 ? b.mood : a.mood;
+  for (const k of ["mood", "prop", "fx"]) o[k] = u > 0.5 ? b[k] : a[k];
   return o;
 }
 
@@ -98,9 +105,9 @@ const ACTIONS = {
     // The action completes quickly and holds a stand through any pause.
     const span = Math.min(1.6, Math.max(0.8, d));
     const u = clamp01(t / span);
-    const crouch = { ...STAND, legL: [0.55, 0.95], legR: [-0.55, -0.95], armL: [0.75, 0.35], armR: [-0.75, -0.35], lift: -16, mood: "flat" };
-    const air = { ...STAND, legL: [-0.6, -1.0], legR: [0.6, 1.0], armL: [-2.5, -0.35], armR: [2.5, 0.35], lift: 70, mood: "smile" };
-    const land = { ...STAND, legL: [0.5, 0.9], legR: [-0.5, -0.9], armL: [0.5, 0.3], armR: [-0.5, -0.3], lift: -14, mood: "smile" };
+    const crouch = { ...STAND, legL: [0.55, 0.95], legR: [-0.55, -0.95], armL: [0.75, 0.35], armR: [-0.75, -0.35], lift: -16, mood: "flat", sx: 1.1, sy: 0.84 };
+    const air = { ...STAND, legL: [-0.6, -1.0], legR: [0.6, 1.0], armL: [-2.5, -0.35], armR: [2.5, 0.35], lift: 70, mood: "grin", sx: 0.9, sy: 1.14 };
+    const land = { ...STAND, legL: [0.5, 0.9], legR: [-0.5, -0.9], armL: [0.5, 0.3], armR: [-0.5, -0.3], lift: -14, mood: "smile", sx: 1.08, sy: 0.86, fx: t - span * 0.78 < 0.32 ? "impact" : "" };
     if (u < 0.22) return mixPose(STAND, crouch, u / 0.22);
     if (u < 0.6) {
       const w = Math.sin(((u - 0.22) / 0.38) * Math.PI);
@@ -129,7 +136,7 @@ const ACTIONS = {
     const u = clamp01(t / span);
     const flail = Math.sin(t * 14) * 0.25;
     const air = { ...STAND, rot: 1.35, lift: -60, armL: [-2.4 + flail, -0.35], armR: [2.4 - flail, 0.35], legL: [-0.5, 0.4], legR: [0.4, 0.6], mood: "o" };
-    const landed = { ...STAND, rot: 1.5, lift: -78, armL: [-1.8, -0.2], armR: [1.6, 0.2], legL: [-0.25, -0.1], legR: [0.2, 0.15], mood: "o" };
+    const landed = { ...STAND, rot: 1.5, lift: -78, armL: [-1.8, -0.2], armR: [1.6, 0.2], legL: [-0.25, -0.1], legR: [0.2, 0.15], mood: "o", sx: 1.06, sy: 0.9, fx: t - span * 0.66 < 0.35 ? "impact" : "" };
     if (u < 0.66) return mixPose(STAND, air, Math.min(1, u * 1.5));
     return mixPose(air, landed, (u - 0.66) / 0.34);
   },
@@ -139,11 +146,11 @@ const ACTIONS = {
       ...STAND,
       armL: [-2.35 + wig, -0.35], armR: [2.35 - wig, 0.35],
       lift: Math.abs(Math.sin(t * 4.5)) * 12,
-      mood: "smile",
+      mood: "grin",
     };
   },
   think() {
-    return { ...STAND, armL: [-0.5, -0.6], armR: [2.1, 1.5], head: 0.12, mood: "flat" };
+    return { ...STAND, armL: [-0.5, -0.6], armR: [2.35, 0.9], head: 0.12, mood: "think" };
   },
   talk(t) {
     const s = Math.sin(t * 4);
@@ -314,7 +321,7 @@ function drawBackground(ctx, style, groundLine, t = 0) {
   g.addColorStop(0, hex(style.c0));
   g.addColorStop(1, hex(style.c1));
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(-16, -16, W + 32, H + 32);
   // soft floating blobs — cheap depth so backgrounds feel alive
   ctx.fillStyle = "rgba(255,255,255,0.10)";
   for (let i = 0; i < 3; i++) {
@@ -326,29 +333,132 @@ function drawBackground(ctx, style, groundLine, t = 0) {
   }
   // ground
   ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.fillRect(0, groundLine + 4, W, H - groundLine);
+  ctx.fillRect(-16, groundLine + 4, W + 32, H - groundLine + 12);
   ctx.strokeStyle = "rgba(255,255,255,0.28)";
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(0, groundLine + 4);
-  ctx.lineTo(W, groundLine + 4);
+  ctx.moveTo(-16, groundLine + 4);
+  ctx.lineTo(W + 16, groundLine + 4);
   ctx.stroke();
+  // faint floor tile grid (storyboard-room feel)
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
+  ctx.lineWidth = 2;
+  for (let i = 1; i <= 5; i++) {
+    const y = groundLine + 4 + i * ((H - groundLine) / 5);
+    ctx.beginPath();
+    ctx.moveTo(-16, y);
+    ctx.lineTo(W + 16, y);
+    ctx.stroke();
+  }
+  for (let i = -4; i <= 8; i++) {
+    ctx.beginPath();
+    ctx.moveTo(W / 2 + i * 62, groundLine + 4);
+    ctx.lineTo(W / 2 + i * 170, H);
+    ctx.stroke();
+  }
 }
 
-function drawFace(ctx, hx, hy, mood) {
-  ctx.fillStyle = "#111111";
-  ctx.beginPath(); ctx.arc(hx - 8, hy - 3, 2.6, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(hx + 8, hy - 3, 2.6, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "#111111";
-  ctx.lineWidth = 2.6;
-  if (mood === "o") {
-    ctx.beginPath(); ctx.ellipse(hx, hy + 9, 4, 5.5, 0, 0, Math.PI * 2); ctx.stroke();
-  } else if (mood === "talk") {
-    ctx.beginPath(); ctx.ellipse(hx, hy + 9, 4.5, 3.5, 0, 0, Math.PI * 2); ctx.stroke();
-  } else if (mood === "flat") {
-    ctx.beginPath(); ctx.moveTo(hx - 6, hy + 9); ctx.lineTo(hx + 6, hy + 9); ctx.stroke();
+/* Expressive cartoon face: blinking pupils with highlights, eyebrows and a
+ * mouth that opens/closes while narration is active (lip-sync feel). */
+function drawFace(ctx, hx, hy, mood, t, speaking) {
+  const blink = (t % 3.4) < 0.14;
+  const exo = 11;
+  const ey = hy - 5;
+  const my = hy + 14;
+  const browY = hy - 17;
+  const worried = mood === "o";
+
+  // eyebrows
+  ctx.strokeStyle = "#141414";
+  ctx.lineWidth = 3;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(hx + side * exo - side * 5, browY + (worried ? 2.5 : 0));
+    ctx.lineTo(hx + side * exo + side * 5, browY - (worried ? 2.5 : 0));
+    ctx.stroke();
+  }
+
+  // eyes
+  if (blink) {
+    ctx.lineWidth = 2.6;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(hx + side * exo - 4, ey);
+      ctx.lineTo(hx + side * exo + 4, ey);
+      ctx.stroke();
+    }
+  } else if (mood === "o") {
+    // wide shocked eyes
+    ctx.fillStyle = "#ffffff";
+    ctx.lineWidth = 2.4;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(hx + side * exo, ey, 6.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#141414";
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(hx + side * exo, ey + 1, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   } else {
-    ctx.beginPath(); ctx.arc(hx, hy + 4, 8, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    // pupils with a highlight dot (side-glance when thinking)
+    const glance = mood === "think" ? 4 : 0;
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = "#141414";
+      ctx.beginPath();
+      ctx.arc(hx + side * exo + glance, ey, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(hx + side * exo + glance - 1.3, ey - 1.3, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // mouth
+  ctx.fillStyle = "#141414";
+  ctx.strokeStyle = "#141414";
+  if (speaking) {
+    // open/close oscillation synced to the narration
+    const open = 3 + Math.abs(Math.sin(t * 12)) * 6;
+    ctx.beginPath();
+    ctx.ellipse(hx, my, 5.5, open, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(hx - 4, my - open + 1, 8, 2.2);
+  } else if (mood === "o") {
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(hx, my + 1, 4, 5.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (mood === "grin") {
+    // big open grin with a teeth band
+    ctx.beginPath();
+    ctx.arc(hx, my - 2, 8, 0, Math.PI);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(hx - 6, my - 2, 12, 2.6);
+  } else if (mood === "talk") {
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(hx, my + 1, 4.5, 3.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (mood === "flat" || mood === "think") {
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(hx - 6, my);
+    ctx.lineTo(hx + 6, my);
+    ctx.stroke();
+  } else {
+    // smile
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(hx, my - 4, 8, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
   }
 }
 
@@ -392,27 +502,86 @@ function drawAccessory(ctx, ch, hx, hy) {
   } else if (a === "bun") {
     ctx.fillStyle = ch.accent;
     ctx.beginPath(); ctx.arc(hx, hy - 30, 9, 0, Math.PI * 2); ctx.fill();
+  } else if (a === "messy") {
+    // wild spiky hair strokes
+    ctx.strokeStyle = ch.accent; ctx.lineWidth = 5; ctx.lineCap = "round";
+    for (const [dx, dy, tx, ty] of [[-14, -20, -22, -38], [-4, -24, -6, -44], [6, -24, 12, -42], [15, -18, 25, -34]]) {
+      ctx.beginPath();
+      ctx.moveTo(hx + dx, hy + dy);
+      ctx.lineTo(hx + tx, hy + ty);
+      ctx.stroke();
+    }
+  } else if (a === "curly") {
+    // bumpy cloud of curls along the crown (kept above the eyes)
+    ctx.fillStyle = ch.accent;
+    for (const [dx, dy, r] of [[-20, -24, 8], [-9, -31, 9], [3, -33, 9], [14, -29, 8], [21, -20, 7]]) {
+      ctx.beginPath();
+      ctx.arc(hx + dx, hy + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (a === "bangs") {
+    // fringe band across the forehead + side strands
+    ctx.fillStyle = ch.accent;
+    ctx.beginPath();
+    ctx.arc(hx, hy, 28, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(hx - 27, hy - 22, 54, 5);
+    ctx.fillRect(hx - 27, hy - 22, 7, 16);
+    ctx.fillRect(hx + 20, hy - 22, 7, 16);
+  } else if (a === "flat") {
+    // flat-top hair
+    ctx.fillStyle = ch.accent;
+    ctx.fillRect(hx - 22, hy - 34, 44, 14);
+    ctx.fillRect(hx - 26, hy - 24, 8, 8);
+    ctx.fillRect(hx + 18, hy - 24, 8, 8);
   }
 }
 
-/** Stick figure: hip at (0,0) local, feet ~80 below, head above the spine. */
-function drawFigure(ctx, ch, pose, cx, groundY) {
+/** Stick figure: hip at (0,0) local, feet ~80 below, head above the spine.
+ * t drives breathing/blinking; speaking opens the mouth; extraProp draws a
+ * scene prop (desk/bed/tree/couch) behind the character. */
+function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraProp = "") {
   const s = 1.15;
-  const hipY = groundY - 82 * s + (pose.lift || 0);
+  const sy = pose.sy || 1;
+  const sx = pose.sx || 1;
+  const lift = (pose.lift || 0) + Math.sin(t * 2.2) * 1.6; // subtle breathing
+  const hipY = groundY - 82 * s * sy + lift;
 
   // shadow shrinks/fades as the character lifts off
   ctx.save();
-  ctx.globalAlpha = 0.25 * Math.max(0.2, 1 - Math.max(0, pose.lift || 0) / 110);
+  ctx.globalAlpha = 0.25 * Math.max(0.2, 1 - Math.max(0, lift) / 110);
   ctx.fillStyle = "#000000";
   ctx.beginPath();
   ctx.ellipse(cx, groundY + 10, 46 * s, 9, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
+  // impact dust: radiating ticks + puffs at the feet (landings/falls)
+  if (pose.fx === "impact") {
+    ctx.save();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
+    for (const [x0, x1, y] of [[-44, -62, -14], [-26, -38, -20], [26, 38, -20], [44, 62, -14]]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + x0, groundY + 4);
+      ctx.lineTo(cx + x1, groundY + 4 + y);
+      ctx.stroke();
+    }
+    for (const [dx, dy, r] of [[-40, -2, 4], [40, -2, 4], [0, -4, 3]]) {
+      ctx.beginPath();
+      ctx.arc(cx + dx, groundY + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.translate(cx, hipY);
   if (pose.rot) ctx.rotate(pose.rot);
-  ctx.scale(s, s);
+  ctx.scale(s * sx, s * sy);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
@@ -430,21 +599,40 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
       ctx.lineTo(ex, ey);
       ctx.stroke();
     };
-    ctx.lineWidth = 15;
+    ctx.lineWidth = 17;
     ctx.strokeStyle = "rgba(255,255,255,0.92)";
     path();
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 9;
     ctx.strokeStyle = ch.color;
     path();
     return [ex, ey];
   };
 
-  // desk prop (writing / cooking scenes) — drawn behind the character
-  if (pose.prop === "desk") {
+  // scene props (behind the character) — simple line-art furniture/nature
+  const prop = pose.prop || extraProp;
+  if (prop === "desk") {
     ctx.fillStyle = "rgba(0,0,0,0.38)";
     ctx.fillRect(16, -50, 178, 12);
     ctx.fillRect(28, -38, 10, 118);
     ctx.fillRect(168, -38, 10, 118);
+  } else if (prop === "bed") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-170, -30, 14, 112); // headboard
+    ctx.fillRect(-170, 52, 160, 26);  // mattress
+    ctx.fillRect(-160, 34, 46, 18);   // pillow
+    ctx.fillRect(-160, 78, 10, 14);   // legs
+    ctx.fillRect(-30, 78, 10, 14);
+  } else if (prop === "tree") {
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath(); ctx.arc(-120, -80, 58, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-75, -125, 40, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(-100, 80); ctx.quadraticCurveTo(-96, 0, -104, -50); ctx.stroke();
+  } else if (prop === "couch") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-175, 8, 26, 84);    // back
+    ctx.fillRect(-175, 58, 130, 26);  // seat
+    ctx.fillRect(-62, 30, 16, 54);    // armrest
   }
 
   // legs (from the hip)
@@ -460,10 +648,10 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
     ctx.lineTo(shX, shY * Math.cos(pose.lean || 0));
     ctx.stroke();
   };
-  ctx.lineWidth = 15;
+  ctx.lineWidth = 17;
   ctx.strokeStyle = "rgba(255,255,255,0.92)";
   spine();
-  ctx.lineWidth = 8;
+  ctx.lineWidth = 9;
   ctx.strokeStyle = ch.color;
   spine();
 
@@ -471,21 +659,21 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
   seg(shX, shY, pose.armL[0], 34, pose.armL[1], 32);
   seg(shX, shY, pose.armR[0], 34, pose.armR[1], 32);
 
-  // head
-  const hy = shY - 34;
-  const hx = shX + Math.sin((pose.lean || 0) + (pose.head || 0)) * 10;
+  // head — big expressive cartoon head
+  const hy = shY - 36;
+  const hx = shX + Math.sin((pose.lean || 0) + (pose.head || 0)) * 12;
   const head = () => {
     ctx.beginPath();
-    ctx.arc(hx, hy, 24, 0, Math.PI * 2);
+    ctx.arc(hx, hy, 30, 0, Math.PI * 2);
     ctx.stroke();
   };
-  ctx.lineWidth = 13;
+  ctx.lineWidth = 15;
   ctx.strokeStyle = "rgba(255,255,255,0.92)";
   head();
-  ctx.lineWidth = 6;
+  ctx.lineWidth = 7;
   ctx.strokeStyle = ch.color;
   head();
-  drawFace(ctx, hx, hy, pose.mood);
+  drawFace(ctx, hx, hy, pose.mood, t, speaking);
   drawAccessory(ctx, ch, hx, hy);
   ctx.restore();
 }
@@ -621,6 +809,21 @@ function bgAt(scenes, t) {
   return { c0, c1 };
 }
 
+/* Scene props picked from the scene text (furniture / environment). */
+const PROP_KEYS = {
+  bed: ["wake", "wakes", "woke", "sleep", "bed", "tired", "yawn", "alarm", "morning", "bedroom"],
+  tree: ["park", "tree", "outside", "forest", "garden", "walk", "walked", "journey", "away", "nature"],
+  couch: ["watch", "watches", "tv", "couch", "sofa", "relax", "rest", "television"],
+  desk: ["desk", "write", "writes", "writing", "work", "office", "laptop", "study", "notebook"],
+};
+function matchProp(text) {
+  const t = String(text).toLowerCase();
+  for (const [prop, keys] of Object.entries(PROP_KEYS)) {
+    if (keys.some((k) => t.includes(k))) return prop;
+  }
+  return "";
+}
+
 /**
  * Render the full animation as PNG frames.
  * opts: { words, scenes?, framesDir, style: {c0, c1, auto?}, characterId, onProgress(pct) }
@@ -637,6 +840,7 @@ async function renderStickmanFrames(opts) {
     ...s,
     action: ACTIONS[s.action] ? s.action : "talk",
     bg: auto ? pickAutoBg(`${s.title || ""} ${s.colors || ""} ${s.action}`, i) : null,
+    prop: matchProp(`${s.title || ""} ${s.colors || ""}`),
   }));
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
@@ -653,7 +857,14 @@ async function renderStickmanFrames(opts) {
 
   for (let i = 0; i < total; i++) {
     const t = i / FPS;
+    // gentle camera drift (scene only — captions and titles stay fixed)
+    const z = 1 + 0.03 * Math.sin(t * 0.3 + 1);
+    ctx.save();
+    ctx.translate(W / 2, H * 0.55);
+    ctx.scale(z, z);
+    ctx.translate(-W / 2, -H * 0.55);
     drawBackground(ctx, auto ? bgAt(scenes, t) : opts.style, GROUND_Y, t);
+    const g = groups.find((gr) => t >= gr[0].start && t <= gr[gr.length - 1].end + 0.35);
     let idx = -1;
     for (let j = 0; j < scenes.length; j++) {
       if (t >= scenes[j].start && t < scenes[j].end) { idx = j; break; }
@@ -668,10 +879,10 @@ async function renderStickmanFrames(opts) {
         const from = ACTIONS[prev.action](prev.end - prev.start, prev.end - prev.start);
         pose = mixPose(from, pose, (t - scene.start) / 0.6);
       }
-      drawFigure(ctx, ch, pose, W / 2, GROUND_Y);
-      if (scene.title && t - scene.start < 2.4) drawSceneTitle(ctx, scene.title, (t - scene.start) / 2.4);
+      drawFigure(ctx, ch, pose, W / 2, GROUND_Y, t, !!g, scene.prop);
     }
-    const g = groups.find((gr) => t >= gr[0].start && t <= gr[gr.length - 1].end + 0.35);
+    ctx.restore();
+    if (scene && scene.title && t - scene.start < 2.4) drawSceneTitle(ctx, scene.title, (t - scene.start) / 2.4);
     drawCaptions(ctx, g, t);
     fs.writeFileSync(path.join(framesDir, `f${String(i).padStart(4, "0")}.png`), canvas.toBuffer("image/png"));
     if (i % 10 === 0) {

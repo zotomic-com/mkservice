@@ -930,6 +930,15 @@ const VIDEO_STYLES = {
   night:  { c0: "0x111827", c1: "0x4b5563", name: "Night (charcoal)" },
 };
 
+/* Stick-figure renderer (character animation + story mode). Loaded lazily —
+ * if the canvas package is unavailable the gradient style still works. */
+let STICKMAN = null;
+try {
+  STICKMAN = require("./scripts/stickman");
+} catch (err) {
+  console.error("[video] stickman renderer unavailable — character animation disabled:", String(err.message || err));
+}
+
 function videoBusyCount() {
   return [...jobs.values()].filter(
     (j) => j.kind === "video" && (j.status === "starting" || j.status === "downloading")
@@ -1098,20 +1107,229 @@ function startVideoJob(text, voice, style) {
   return job;
 }
 
-app.post("/api/video", (req, res) => {
-  const { text, voice = "en-US-GuyNeural", style = "ocean" } = req.body || {};
+/**
+ * Stick-figure video job: the character acts out the script while karaoke
+ * captions play. Two modes:
+ *   storyScenes = null    → whole text narrated, scenes built from the words
+ *   storyScenes = [...]   → timestamped storyboard (Gemini/ChatGPT style):
+ *                           each scene's Voiceover is narrated onto its
+ *                           timeline slot; the Visual description picks the
+ *                           action; the scene title shows as a card.
+ */
+function startFigureJob(text, voice, style, characterId, storyScenes) {
+  const job = createJob("");
+  job.kind = "video";
+  job.status = "downloading";
+  job.title = "Generated video";
+  job.note = storyScenes ? "Reading the storyboard…" : "Generating the voice…";
+
+  const dir = MODE === "local" ? LOCAL_DIR : TEMP_DIR;
+  const base = path.join(dir, `vid-${job.id}`);
+  const audio = `${base}.mp3`;
+  const wordsFile = `${base}.json`;
+  const framesDir = path.join(dir, `frames-${job.id}`);
+  const partsDir = path.join(dir, `parts-${job.id}`);
+  const out = path.join(dir, MODE === "local" ? `video-${job.id}.mp4` : `${job.id}-generated-video.mp4`);
+  job.filename = path.basename(out);
+
+  let ff = null;
+  let killed = false;
+
+  const cleanup = () => {
+    for (const f of [audio, wordsFile]) { try { fs.unlinkSync(f); } catch {} }
+    for (const d of [framesDir, partsDir]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  };
+  const fail = (msg) => {
+    job.status = "error";
+    job.error = msg;
+    cleanup();
+    if (ff) { try { ff.kill("SIGKILL"); } catch {} }
+  };
+  const runFfmpeg = (args) =>
+    new Promise((resolve, reject) => {
+      const p = spawn("ffmpeg", args, { windowsHide: true });
+      let err = "";
+      p.stderr.on("data", (c) => { err += c.toString(); });
+      p.on("error", reject);
+      p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(err.trim().split("\n").slice(-2).join(" ") || "ffmpeg failed"))));
+    });
+  const runVoice = (t, mp3, json) =>
+    new Promise((resolve, reject) => {
+      const p = spawn("python", [path.join(__dirname, "scripts", "video_voice.py"), t, voice, mp3, json], { windowsHide: true });
+      let err = "";
+      p.stderr.on("data", (c) => { err += c.toString(); });
+      p.on("error", reject);
+      p.on("close", (code) =>
+        code === 0 && fs.existsSync(mp3)
+          ? resolve()
+          : reject(new Error(err.trim().split("\n").slice(-2).join(" ") || "voice generation failed")));
+    });
+
+  (async () => {
+    try {
+      const words = [];
+      let timeline = null;
+
+      if (storyScenes) {
+        // Story mode: one narration per scene, placed on its timeline slot.
+        fs.mkdirSync(partsDir, { recursive: true });
+        timeline = [];
+        const listLines = [];
+        let cursor = 0;
+        for (let i = 0; i < storyScenes.length && cursor < 89; i++) {
+          const sc = storyScenes[i];
+          const start = cursor;
+          const slotMp3 = path.join(partsDir, `slot-${i}.mp3`);
+
+          let narrWords = [];
+          const narrMp3 = path.join(partsDir, `narr-${i}.mp3`);
+          if (sc.voiceover) {
+            const narrWordsFile = path.join(partsDir, `narr-${i}.json`);
+            await runVoice(sc.voiceover, narrMp3, narrWordsFile);
+            narrWords = JSON.parse(fs.readFileSync(narrWordsFile, "utf8"));
+          }
+          const narrLen = narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0;
+          // narration lands at the storyboard time, but never before this slot
+          const delay = Math.max(0, Math.min(sc.t0 - start, Math.max(0, sc.t1 - sc.t0 - narrLen)));
+          const end = Math.min(Math.max(sc.t1, start + delay + narrLen, start + 2), 90);
+          const slotLen = end - start;
+
+          if (narrWords.length) {
+            for (const w of narrWords) words.push({ w: w.w, start: start + delay + w.start, end: start + delay + w.end });
+            await runFfmpeg([
+              "-y", "-i", narrMp3,
+              "-af", `adelay=delays=${Math.round(delay * 1000)}:all=1,apad=whole_dur=${slotLen.toFixed(3)}`,
+              "-c:a", "libmp3lame", "-q:a", "4", slotMp3,
+            ]);
+          } else {
+            await runFfmpeg([
+              "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+              "-t", slotLen.toFixed(3),
+              "-c:a", "libmp3lame", "-q:a", "4", slotMp3,
+            ]);
+          }
+          listLines.push(`file '${slotMp3.replace(/\\/g, "/")}'`);
+          timeline.push({
+            start,
+            end,
+            action: STICKMAN.matchAction(sc.visual) ?? STICKMAN.matchAction(sc.voiceover) ?? STICKMAN.pickAction("", i),
+            title: sc.title || "",
+          });
+          cursor = end;
+          job.percent = 2 + Math.round((i / Math.max(1, storyScenes.length)) * 12);
+        }
+        if (!timeline.length) throw new Error("storyboard produced no scenes");
+        const listFile = path.join(partsDir, "list.txt");
+        fs.writeFileSync(listFile, listLines.join("\n"), "utf8");
+        await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c:a", "libmp3lame", "-q:a", "4", audio]);
+      } else {
+        // Plain mode: narrate the whole text once.
+        await runVoice(text, audio, wordsFile);
+        words.push(...JSON.parse(fs.readFileSync(wordsFile, "utf8")));
+      }
+      if (!words.length) throw new Error("voice returned no word timings");
+
+      // 2. Stick-figure animation frames
+      job.note = "Animating the scene…";
+      const render = await STICKMAN.renderStickmanFrames({
+        words,
+        scenes: timeline || undefined,
+        framesDir,
+        style: VIDEO_STYLES[style],
+        characterId,
+        onProgress: (p) => { job.percent = Math.min(69, p); },
+      });
+
+      // 3. Encode frames + narration
+      job.note = "Rendering the video…";
+      const args = [
+        "-y",
+        "-framerate", String(render.fps),
+        "-i", `${path.basename(framesDir)}/f%04d.png`,
+        "-i", path.basename(audio),
+        "-map", "0:v", "-map", "1:a",
+        "-shortest",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-threads", "2",
+        "-x264-params", "rc-lookahead=0:bframes=0",
+        "-filter_threads", "1",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        path.basename(out),
+        "-progress", "pipe:1", "-nostats",
+      ];
+      ff = spawn("ffmpeg", args, { windowsHide: true, cwd: dir });
+      job.proc = ff;
+
+      let buf = "";
+      ff.stdout.on("data", (c) => {
+        buf += c.toString();
+        let last = 0;
+        const m = /out_time_ms=(\d+)/g;
+        let match;
+        while ((match = m.exec(buf))) last = Number(match[1]);
+        if (last && render.duration) job.percent = Math.min(99, 70 + (last / 1e6 / render.duration) * 29);
+      });
+      let stderrTail = "";
+      ff.stderr.on("data", (c) => { stderrTail = (stderrTail + c.toString()).split("\n").slice(-4).join("\n"); });
+
+      const timer = setTimeout(() => {
+        killed = true;
+        try { ff.kill("SIGKILL"); } catch {}
+        fail("The video took too long to render. Try a shorter script.");
+      }, 15 * 60 * 1000);
+
+      ff.on("close", (code) => {
+        clearTimeout(timer);
+        if (killed) return;
+        if (code === 0 && fs.existsSync(out) && fs.statSync(out).size > 10_000) {
+          job.status = "done";
+          job.percent = 100;
+          job.filepath = out;
+          job.size = fs.statSync(out).size;
+          cleanup();
+        } else {
+          fail(`Video rendering failed. Try again (maybe with a shorter script).${stderrTail ? ` [${stderrTail.slice(0, 500)}]` : ""}`);
+        }
+      });
+    } catch (err) {
+      fail(String(err.message || err).slice(0, 500));
+    }
+  })();
+
+  return job;
+}
+
+app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "" } = req.body || {};
   if (!text || typeof text !== "string" || text.trim().length < 10) {
     return res.status(400).json({ error: "Please enter a script (at least 10 characters)." });
   }
-  if (text.length > 1200) {
-    return res.status(400).json({ error: "Script is too long (1200 characters max — about 60 seconds of video)." });
+  if (text.length > 5000) {
+    return res.status(400).json({ error: "Script is too long (5000 characters max — about 60–90 seconds of video)." });
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
   if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });
+  let characterId = "";
+  if (character) {
+    if (!STICKMAN || !STICKMAN.CHARACTERS.some((c) => c.id === character)) {
+      return res.status(400).json({ error: "Unknown character." });
+    }
+    characterId = character;
+  }
   if (videoBusyCount() >= 2) {
     return res.status(429).json({ error: "The video studio is busy — please try again in a moment." });
   }
-  res.json({ jobId: startVideoJob(text.trim(), voice, style).id });
+  const trimmed = text.trim();
+  // Timestamped storyboard (Gemini/ChatGPT style) → story mode when a
+  // character was picked; plain narration otherwise.
+  const storyScenes = STICKMAN ? STICKMAN.parseStoryScript(trimmed) : [];
+  if (storyScenes.length && characterId) {
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes).id });
+  }
+  if (characterId) {
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null).id });
+  }
+  res.json({ jobId: startVideoJob(trimmed, voice, style).id });
 });
 
 app.listen(PORT, () => {

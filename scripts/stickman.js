@@ -14,7 +14,7 @@ const { createCanvas, GlobalFonts } = require("@napi-rs/canvas");
 
 const W = 540;
 const H = 960;
-const FPS = 10;
+const FPS = 15;
 const GROUND_Y = 760;
 const TEXT_SIZE = 42;
 
@@ -253,14 +253,16 @@ function parseStoryScript(text) {
       continue;
     }
     if (!cur) continue;
-    const kv = /^(visual|audio|voiceover|narration|narrator|sfx)\s*:\s*(.*)$/i.exec(line);
+    const kv = /^(visual|audio|voiceover|narration|narrator|sfx|colors?|colours?|background|backdrop|elements?)\s*:\s*(.*)$/i.exec(line);
     if (kv) {
       const k = kv[1].toLowerCase();
-      const v = kv[2].replace(/^["“']|["”']$/g, "").trim();
+      const v = kv[2].replace(/^[“"']|[”"']$/g, "").trim();
       if (k === "voiceover" || k === "narration" || k === "narrator") {
         cur.voiceover += (cur.voiceover ? " " : "") + v;
       } else if (k === "visual") {
         cur.visual += (cur.visual ? " " : "") + v;
+      } else if (k.startsWith("colo") || k === "background" || k === "backdrop" || k === "element" || k === "elements") {
+        cur.colors = (cur.colors ? " " : "") + v; // scene color mood (Auto style)
       } else {
         cur.audio = (cur.audio ? " " : "") + v; // music cues: noted, not generated
       }
@@ -307,12 +309,21 @@ function hex(c) {
   return s.startsWith("#") ? s : "#" + s.replace(/^0x/, "");
 }
 
-function drawBackground(ctx, style, groundLine) {
+function drawBackground(ctx, style, groundLine, t = 0) {
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, hex(style.c0));
   g.addColorStop(1, hex(style.c1));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
+  // soft floating blobs — cheap depth so backgrounds feel alive
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  for (let i = 0; i < 3; i++) {
+    const px = W * (0.18 + 0.28 * i) + Math.sin(t * 0.35 + i * 2.1) * 42;
+    const py = H * (0.16 + 0.17 * i) + Math.cos(t * 0.28 + i * 1.7) * 32;
+    ctx.beginPath();
+    ctx.arc(px, py, 95 + i * 48, 0, Math.PI * 2);
+    ctx.fill();
+  }
   // ground
   ctx.fillStyle = "rgba(0,0,0,0.3)";
   ctx.fillRect(0, groundLine + 4, W, H - groundLine);
@@ -404,20 +415,27 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
   ctx.scale(s, s);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = ch.color;
-  ctx.fillStyle = ch.color;
 
+  /* Every limb is stroked twice: a wide white outline underneath, then the
+   * character color — keeps dark characters readable on any background. */
   const seg = (x0, y0, a1, l1, a2, l2) => {
     const kx = x0 + Math.sin(a1) * l1;
     const ky = y0 + Math.cos(a1) * l1;
     const ex = kx + Math.sin(a1 + a2) * l2;
     const ey = ky + Math.cos(a1 + a2) * l2;
+    const path = () => {
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(kx, ky);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+    };
+    ctx.lineWidth = 15;
+    ctx.strokeStyle = "rgba(255,255,255,0.92)";
+    path();
     ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(kx, ky);
-    ctx.lineTo(ex, ey);
-    ctx.stroke();
+    ctx.strokeStyle = ch.color;
+    path();
     return [ex, ey];
   };
 
@@ -436,11 +454,18 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
   // spine with lean
   const shY = -62;
   const shX = Math.sin(pose.lean || 0) * -shY;
+  const spine = () => {
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(shX, shY * Math.cos(pose.lean || 0));
+    ctx.stroke();
+  };
+  ctx.lineWidth = 15;
+  ctx.strokeStyle = "rgba(255,255,255,0.92)";
+  spine();
   ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(shX, shY * Math.cos(pose.lean || 0));
-  ctx.stroke();
+  ctx.strokeStyle = ch.color;
+  spine();
 
   // arms (from the shoulder)
   seg(shX, shY, pose.armL[0], 34, pose.armL[1], 32);
@@ -449,10 +474,17 @@ function drawFigure(ctx, ch, pose, cx, groundY) {
   // head
   const hy = shY - 34;
   const hx = shX + Math.sin((pose.lean || 0) + (pose.head || 0)) * 10;
+  const head = () => {
+    ctx.beginPath();
+    ctx.arc(hx, hy, 24, 0, Math.PI * 2);
+    ctx.stroke();
+  };
+  ctx.lineWidth = 13;
+  ctx.strokeStyle = "rgba(255,255,255,0.92)";
+  head();
   ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.arc(hx, hy, 24, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.strokeStyle = ch.color;
+  head();
   drawFace(ctx, hx, hy, pose.mood);
   drawAccessory(ctx, ch, hx, hy);
   ctx.restore();
@@ -522,9 +554,76 @@ function drawCaptions(ctx, group, t) {
 /* Frame rendering                                                     */
 /* ------------------------------------------------------------------ */
 
+/* "Auto" screen style: each scene gets a background mood picked from its
+ * text; colors cross-fade over 1.2s at scene boundaries. */
+const AUTO_BG = {
+  warm:   ["#fbbf24", "#ef4444"], // happy / celebrate
+  violet: ["#a78bfa", "#ec4899"], // mystery / night / space
+  green:  ["#34d399", "#0d9488"], // money / success / nature
+  slate:  ["#94a3b8", "#475569"], // business / serious
+  cool:   ["#38bdf8", "#6366f1"], // calm / tech (fallback)
+};
+const AUTO_BG_KEYS = {
+  warm: ["celebrate", "happy", "joy", "laugh", "funny", "smile", "party", "triumph", "win", "victory", "cheer", "sunny", "morning", "wildly", "fanfare"],
+  violet: ["mystery", "mysterious", "dark", "night", "secret", "magic", "glowing", "space", "alien", "star", "shadow", "ship", "spaceship"],
+  green: ["money", "rich", "gold", "nature", "forest", "green", "success", "approved", "stamp", "lucky", "lucky break"],
+  slate: ["business", "work", "office", "tax", "audit", "desk", "paperwork", "report", "serious", "meeting", "coffee", "typewriter", "notepad"],
+};
+const AUTO_BG_ORDER = ["cool", "warm", "green", "violet", "slate"];
+
+/* Explicit color words win over mood keywords (LLM-written Colors lines);
+ * the first color word in reading order decides, so "green ... gold" is
+ * green, not gold-warm. */
+const COLOR_WORD_MAP = {
+  warm: new Set(["red", "orange", "gold", "golden", "yellow", "sunset", "fire", "warm", "amber", "peach"]),
+  violet: new Set(["purple", "pink", "violet", "magenta", "lavender", "indigo", "neon"]),
+  green: new Set(["green", "teal", "emerald", "mint", "lime", "olive"]),
+  slate: new Set(["gray", "grey", "silver", "charcoal"]),
+  cool: new Set(["blue", "cyan", "sky", "ocean", "ice", "turquoise", "futuristic", "chrome"]),
+};
+
+function pickAutoBg(text, i) {
+  const t = String(text).toLowerCase();
+  for (const w of t.match(/[a-z-]+/g) || []) {
+    for (const [mood, set] of Object.entries(COLOR_WORD_MAP)) {
+      if (set.has(w)) return AUTO_BG[mood];
+    }
+  }
+  if (/black[- ](and|&)[- ]white|monochrome/.test(t)) return AUTO_BG.slate;
+  for (const [mood, keys] of Object.entries(AUTO_BG_KEYS)) {
+    if (keys.some((k) => t.includes(k))) return AUTO_BG[mood];
+  }
+  return AUTO_BG[AUTO_BG_ORDER[Math.abs(i) % AUTO_BG_ORDER.length]];
+}
+
+function hexLerp(a, b, u) {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const ch = (sh) => Math.round(lerp((pa >> sh) & 255, (pb >> sh) & 255, u));
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, "0")}`;
+}
+
+/** Background colors at time t (with smooth cross-scene fading). */
+function bgAt(scenes, t) {
+  let idx = scenes.length - 1;
+  for (let i = 0; i < scenes.length; i++) {
+    if (t >= scenes[i].start && t < scenes[i].end) { idx = i; break; }
+  }
+  const cur = scenes[idx];
+  let c0 = cur.bg[0];
+  let c1 = cur.bg[1];
+  if (idx > 0) {
+    const prev = scenes[idx - 1];
+    const u = clamp01((t - cur.start) / 1.2);
+    c0 = hexLerp(prev.bg[0], c0, u);
+    c1 = hexLerp(prev.bg[1], c1, u);
+  }
+  return { c0, c1 };
+}
+
 /**
  * Render the full animation as PNG frames.
- * opts: { words, scenes?, framesDir, style: {c0, c1}, characterId, onProgress(pct) }
+ * opts: { words, scenes?, framesDir, style: {c0, c1, auto?}, characterId, onProgress(pct) }
  *   words:  [{ w, start, end }] — absolute times on the final audio track
  *   scenes: optional [{ start, end, action?, title? }] (story mode); built
  *           from word timings when omitted (plain mode)
@@ -533,9 +632,11 @@ function drawCaptions(ctx, group, t) {
 async function renderStickmanFrames(opts) {
   const ch = CHARACTERS.find((c) => c.id === opts.characterId) || CHARACTERS[0];
   const words = opts.words;
-  const scenes = (opts.scenes || buildScenes(words, Infinity)).map((s) => ({
+  const auto = !!opts.style.auto;
+  const scenes = (opts.scenes || buildScenes(words, Infinity)).map((s, i) => ({
     ...s,
     action: ACTIONS[s.action] ? s.action : "talk",
+    bg: auto ? pickAutoBg(`${s.title || ""} ${s.colors || ""} ${s.action}`, i) : null,
   }));
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
@@ -552,10 +653,21 @@ async function renderStickmanFrames(opts) {
 
   for (let i = 0; i < total; i++) {
     const t = i / FPS;
-    drawBackground(ctx, opts.style, GROUND_Y);
-    const scene = scenes.find((sc) => t >= sc.start && t < sc.end) || scenes[scenes.length - 1];
+    drawBackground(ctx, auto ? bgAt(scenes, t) : opts.style, GROUND_Y, t);
+    let idx = -1;
+    for (let j = 0; j < scenes.length; j++) {
+      if (t >= scenes[j].start && t < scenes[j].end) { idx = j; break; }
+    }
+    const si = idx >= 0 ? idx : scenes.length - 1;
+    const scene = scenes[si];
     if (scene) {
-      const pose = ACTIONS[scene.action](t - scene.start, scene.end - scene.start);
+      let pose = ACTIONS[scene.action](t - scene.start, scene.end - scene.start);
+      // blend from the previous scene's end pose — no teleporting at cuts
+      if (si > 0 && t - scene.start < 0.6) {
+        const prev = scenes[si - 1];
+        const from = ACTIONS[prev.action](prev.end - prev.start, prev.end - prev.start);
+        pose = mixPose(from, pose, (t - scene.start) / 0.6);
+      }
       drawFigure(ctx, ch, pose, W / 2, GROUND_Y);
       if (scene.title && t - scene.start < 2.4) drawSceneTitle(ctx, scene.title, (t - scene.start) / 2.4);
     }

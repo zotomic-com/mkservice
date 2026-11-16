@@ -925,6 +925,7 @@ if (MODE === "public" && fs.existsSync(BGUTIL_SERVER)) {
 /* ------------------------------------------------------------------ */
 
 const VIDEO_STYLES = {
+  auto:   { c0: "0x38bdf8", c1: "0x6366f1", name: "Auto (adaptive colors)", auto: true },
   ocean:  { c0: "0x0b1f3a", c1: "0x0e7a5f", name: "Ocean (navy → green)" },
   sunset: { c0: "0x2b0a4d", c1: "0xc2410c", name: "Sunset (purple → orange)" },
   night:  { c0: "0x111827", c1: "0x4b5563", name: "Night (charcoal)" },
@@ -940,6 +941,34 @@ const AUDIO_STYLES = {
   news:     { rate: "+6%",  pitch: "+0Hz", name: "Newsreader" },
   hype:     { rate: "+12%", pitch: "+6Hz", name: "Hype / Excited" },
 };
+
+/* audioStyle "auto": per-scene delivery picked from the scene's mood. */
+const AUDIO_MOODS = {
+  hype:     ["celebrate", "victory", "triumph", "amazing", "wow", "cheer", "fanfare", "approved", "hooray", "finally", "wildly", "jump"],
+  narrator: ["mystery", "mysterious", "dark", "night", "horror", "secret", "shadow", "silence", "whisper", "space", "alien", "glowing", "ship", "spaceship"],
+  news:     ["business", "tax", "audit", "paperwork", "report", "office", "deduction", "official", "stamp", "money", "cost"],
+  podcast:  ["think", "thought", "remember", "wonder", "honestly", "maybe", "question", "idea", "consider"],
+  dialogue: ["hello", "hey", "said", "says", "talk", "asked", "demand", "shout", "argue", "popped"],
+};
+const AUDIO_MOOD_RE = Object.entries(AUDIO_MOODS).map(([id, keys]) => [
+  id,
+  keys.map((k) => new RegExp(`\\b${k}`, "i")),
+]);
+function pickAudioStyleId(text) {
+  const t = String(text);
+  for (const [id, res] of AUDIO_MOOD_RE) {
+    if (res.some((re) => re.test(t))) return id;
+  }
+  return "story";
+}
+
+/* Speed a delivery preset up (keeps storyboard timestamps accurate when a
+ * voiceover is longer than its scene slot). */
+function fasterTune(tune, speedup) {
+  const base = tune && tune.rate ? parseInt(tune.rate, 10) : 0;
+  const pct = Math.min(40, (Number.isNaN(base) ? 0 : base) + speedup);
+  return { rate: `${pct >= 0 ? "+" : ""}${pct}%`, pitch: tune ? tune.pitch : "+0Hz" };
+}
 
 /* Stick-figure renderer (character animation + story mode). Loaded lazily —
  * if the canvas package is unavailable the gradient style still works. */
@@ -1011,7 +1040,9 @@ ${events}`;
 
 function startVideoJob(text, voice, style, audioStyle = "") {
   const job = createJob("");
-  const audioTune = AUDIO_STYLES[audioStyle];
+  const audioTune = audioStyle === "auto"
+    ? AUDIO_STYLES[pickAudioStyleId(text)] ?? AUDIO_STYLES.story
+    : AUDIO_STYLES[audioStyle];
   job.kind = "video";
   job.status = "downloading";
   job.title = "Generated video";
@@ -1131,7 +1162,7 @@ function startVideoJob(text, voice, style, audioStyle = "") {
  */
 function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "") {
   const job = createJob("");
-  const audioTune = AUDIO_STYLES[audioStyle];
+  const audioTune = audioStyle === "auto" ? null : AUDIO_STYLES[audioStyle];
   job.kind = "video";
   job.status = "downloading";
   job.title = "Generated video";
@@ -1167,11 +1198,11 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
       p.on("error", reject);
       p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(err.trim().split("\n").slice(-2).join(" ") || "ffmpeg failed"))));
     });
-  const runVoice = (t, mp3, json) =>
+  const runVoice = (t, mp3, json, tune = audioTune) =>
     new Promise((resolve, reject) => {
       const p = spawn("python", [
         path.join(__dirname, "scripts", "video_voice.py"), t, voice, mp3, json,
-        audioTune ? audioTune.rate : "+0%", audioTune ? audioTune.pitch : "+0Hz",
+        tune ? tune.rate : "+0%", tune ? tune.pitch : "+0Hz",
       ], { windowsHide: true });
       let err = "";
       p.stderr.on("data", (c) => { err += c.toString(); });
@@ -1204,14 +1235,27 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
           // narrate their title — trimmed so it fits the timeline slot
           // (~15 spoken characters per second).
           let narrText = sc.voiceover;
+          const slotGuess = Math.max(2, sc.t1 - sc.t0);
           if (!narrText && sc.title) {
-            const slotGuess = Math.max(2, sc.t1 - sc.t0);
             narrText = sc.title.slice(0, Math.max(24, Math.round(slotGuess * 15)));
           }
+          // audioStyle "auto": each scene gets a delivery matching its mood.
+          let tune = audioStyle === "auto"
+            ? AUDIO_STYLES[pickAudioStyleId(`${sc.title || ""} ${sc.visual || ""} ${sc.voiceover || ""}`)]
+            : audioTune;
           if (narrText) {
             const narrWordsFile = path.join(partsDir, `narr-${i}.json`);
-            await runVoice(narrText, narrMp3, narrWordsFile);
+            await runVoice(narrText, narrMp3, narrWordsFile, tune);
             narrWords = JSON.parse(fs.readFileSync(narrWordsFile, "utf8"));
+            // Timestamp accuracy: if the narration overruns its storyboard
+            // slot, re-render it faster (once) so scenes stay on their times.
+            const over = (narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0) - slotGuess * 0.95;
+            if (over > 0) {
+              const speedup = Math.min(35, Math.round((over / (slotGuess * 0.88)) * 100) + 5);
+              tune = fasterTune(tune, speedup);
+              await runVoice(narrText, narrMp3, narrWordsFile, tune);
+              narrWords = JSON.parse(fs.readFileSync(narrWordsFile, "utf8"));
+            }
           }
           const narrLen = narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0;
           // narration lands at the storyboard time, but never before this slot
@@ -1239,6 +1283,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
             end,
             action: STICKMAN.matchAction(sc.visual) ?? STICKMAN.matchAction(sc.voiceover) ?? STICKMAN.pickAction("", i),
             title: (sc.title || "").slice(0, 60),
+            colors: sc.colors || "",
           });
           cursor = end;
           job.percent = 2 + Math.round((i / Math.max(1, storyScenes.length)) * 12);
@@ -1334,7 +1379,7 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
   if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });
-  if (audioStyle && !AUDIO_STYLES[audioStyle]) return res.status(400).json({ error: "Unknown audio style." });
+  if (audioStyle && audioStyle !== "auto" && !AUDIO_STYLES[audioStyle]) return res.status(400).json({ error: "Unknown audio style." });
   let characterId = "";
   if (character) {
     if (!STICKMAN || !STICKMAN.CHARACTERS.some((c) => c.id === character)) {

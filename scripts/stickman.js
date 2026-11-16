@@ -570,20 +570,50 @@ async function renderStickmanFrames(opts) {
   return { framesDir, total, fps: FPS, duration };
 }
 
-/** Scene title card at the top of the frame (fades in and out). */
+/** Scene title card at the top of the frame — word-wrapped (up to 3 lines,
+ * shrinking font) so long detail-line titles stay inside the frame. */
 function drawSceneTitle(ctx, title, u) {
   const alpha = Math.min(1, u / 0.2, (1 - u) / 0.25);
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-  ctx.font = `bold 30px Stick`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const y = 96;
+  const maxW = 480;
+  const words = String(title).split(/\s+/).filter(Boolean);
+  let size = 30;
+  let lines = [[]];
+  for (;;) {
+    ctx.font = `bold ${size}px Stick`;
+    lines = [[]];
+    let width = 0;
+    let truncated = false;
+    for (const w of words) {
+      const ww = ctx.measureText(w).width;
+      if (width + ww > maxW && lines[lines.length - 1].length) {
+        if (lines.length >= 3) { truncated = true; break; }
+        lines.push([]);
+        width = 0;
+      }
+      lines[lines.length - 1].push(w);
+      width += ww + 8;
+    }
+    if (!truncated || size <= 20) {
+      if (truncated) lines[lines.length - 1].push("…");
+      break;
+    }
+    size -= 3;
+  }
   ctx.lineWidth = 8;
   ctx.strokeStyle = "rgba(0,0,0,0.85)";
-  ctx.strokeText(title, W / 2, y);
   ctx.fillStyle = "#FFFFFF";
-  ctx.fillText(title, W / 2, y);
+  const lineH = size + 8;
+  let y = 96 - ((lines.length - 1) * lineH) / 2;
+  for (const line of lines) {
+    const text = line.join(" ");
+    ctx.strokeText(text, W / 2, y);
+    ctx.fillText(text, W / 2, y);
+    y += lineH;
+  }
   ctx.restore();
 }
 

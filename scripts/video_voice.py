@@ -15,8 +15,10 @@ import edge_tts
 
 async def main() -> None:
     text, voice, out_media, out_words = sys.argv[1:5]
+    rate = sys.argv[5] if len(sys.argv) > 5 else "+0%"
+    pitch = sys.argv[6] if len(sys.argv) > 6 else "+0Hz"
     words = []
-    com = edge_tts.Communicate(text, voice, boundary="WordBoundary")
+    com = edge_tts.Communicate(text, voice, boundary="WordBoundary", rate=rate, pitch=pitch)
     with open(out_media, "wb") as f:
         async for chunk in com.stream():
             if chunk["type"] == "audio":

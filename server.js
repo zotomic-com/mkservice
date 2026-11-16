@@ -928,6 +928,17 @@ const VIDEO_STYLES = {
   ocean:  { c0: "0x0b1f3a", c1: "0x0e7a5f", name: "Ocean (navy → green)" },
   sunset: { c0: "0x2b0a4d", c1: "0xc2410c", name: "Sunset (purple → orange)" },
   night:  { c0: "0x111827", c1: "0x4b5563", name: "Night (charcoal)" },
+  blank:  { c0: "0xffffff", c1: "0xffffff", name: "Blank (plain white screen)" },
+};
+
+/* Narration delivery presets (edge-tts rate/pitch tweaks). */
+const AUDIO_STYLES = {
+  story:    { rate: "-8%",  pitch: "-4Hz", name: "Storyteller" },
+  podcast:  { rate: "-3%",  pitch: "+2Hz", name: "Podcast" },
+  dialogue: { rate: "+3%",  pitch: "+5Hz", name: "Dialogue" },
+  narrator: { rate: "-12%", pitch: "-8Hz", name: "Movie Narrator" },
+  news:     { rate: "+6%",  pitch: "+0Hz", name: "Newsreader" },
+  hype:     { rate: "+12%", pitch: "+6Hz", name: "Hype / Excited" },
 };
 
 /* Stick-figure renderer (character animation + story mode). Loaded lazily —
@@ -998,8 +1009,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 ${events}`;
 }
 
-function startVideoJob(text, voice, style) {
+function startVideoJob(text, voice, style, audioStyle = "") {
   const job = createJob("");
+  const audioTune = AUDIO_STYLES[audioStyle];
   job.kind = "video";
   job.status = "downloading";
   job.title = "Generated video";
@@ -1026,6 +1038,7 @@ function startVideoJob(text, voice, style) {
         const p = spawn("python", [
           path.join(__dirname, "scripts", "video_voice.py"),
           text, voice, audio, wordsFile,
+          audioTune ? audioTune.rate : "+0%", audioTune ? audioTune.pitch : "+0Hz",
         ], { windowsHide: true });
         let err = "";
         p.stderr.on("data", (c) => { err += c.toString(); });
@@ -1116,8 +1129,9 @@ function startVideoJob(text, voice, style) {
  *                           timeline slot; the Visual description picks the
  *                           action; the scene title shows as a card.
  */
-function startFigureJob(text, voice, style, characterId, storyScenes) {
+function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "") {
   const job = createJob("");
+  const audioTune = AUDIO_STYLES[audioStyle];
   job.kind = "video";
   job.status = "downloading";
   job.title = "Generated video";
@@ -1155,7 +1169,10 @@ function startFigureJob(text, voice, style, characterId, storyScenes) {
     });
   const runVoice = (t, mp3, json) =>
     new Promise((resolve, reject) => {
-      const p = spawn("python", [path.join(__dirname, "scripts", "video_voice.py"), t, voice, mp3, json], { windowsHide: true });
+      const p = spawn("python", [
+        path.join(__dirname, "scripts", "video_voice.py"), t, voice, mp3, json,
+        audioTune ? audioTune.rate : "+0%", audioTune ? audioTune.pitch : "+0Hz",
+      ], { windowsHide: true });
       let err = "";
       p.stderr.on("data", (c) => { err += c.toString(); });
       p.on("error", reject);
@@ -1183,9 +1200,17 @@ function startFigureJob(text, voice, style, characterId, storyScenes) {
 
           let narrWords = [];
           const narrMp3 = path.join(partsDir, `narr-${i}.mp3`);
-          if (sc.voiceover) {
+          // Scenes without a Voiceover line (AI "master prompt" style scripts)
+          // narrate their title — trimmed so it fits the timeline slot
+          // (~15 spoken characters per second).
+          let narrText = sc.voiceover;
+          if (!narrText && sc.title) {
+            const slotGuess = Math.max(2, sc.t1 - sc.t0);
+            narrText = sc.title.slice(0, Math.max(24, Math.round(slotGuess * 15)));
+          }
+          if (narrText) {
             const narrWordsFile = path.join(partsDir, `narr-${i}.json`);
-            await runVoice(sc.voiceover, narrMp3, narrWordsFile);
+            await runVoice(narrText, narrMp3, narrWordsFile);
             narrWords = JSON.parse(fs.readFileSync(narrWordsFile, "utf8"));
           }
           const narrLen = narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0;
@@ -1213,7 +1238,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes) {
             start,
             end,
             action: STICKMAN.matchAction(sc.visual) ?? STICKMAN.matchAction(sc.voiceover) ?? STICKMAN.pickAction("", i),
-            title: sc.title || "",
+            title: (sc.title || "").slice(0, 60),
           });
           cursor = end;
           job.percent = 2 + Math.round((i / Math.max(1, storyScenes.length)) * 12);
@@ -1300,7 +1325,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes) {
   return job;
 }
 
-app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "" } = req.body || {};
+app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "", audioStyle = "" } = req.body || {};
   if (!text || typeof text !== "string" || text.trim().length < 10) {
     return res.status(400).json({ error: "Please enter a script (at least 10 characters)." });
   }
@@ -1309,6 +1334,7 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
   if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });
+  if (audioStyle && !AUDIO_STYLES[audioStyle]) return res.status(400).json({ error: "Unknown audio style." });
   let characterId = "";
   if (character) {
     if (!STICKMAN || !STICKMAN.CHARACTERS.some((c) => c.id === character)) {
@@ -1321,15 +1347,18 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
   }
   const trimmed = text.trim();
   // Timestamped storyboard (Gemini/ChatGPT style) → story mode when a
-  // character was picked; plain narration otherwise.
-  const storyScenes = STICKMAN ? STICKMAN.parseStoryScript(trimmed) : [];
+  // character was picked; plain narration otherwise. Prompt-style scripts
+  // (scenes without Voiceover lines AND without titles) have nothing to
+  // narrate per scene, so they fall back to plain narration.
+  let storyScenes = STICKMAN ? STICKMAN.parseStoryScript(trimmed) : [];
+  if (storyScenes.length && !storyScenes.some((s) => s.voiceover || s.title)) storyScenes = [];
   if (storyScenes.length && characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes, audioStyle).id });
   }
   if (characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle).id });
   }
-  res.json({ jobId: startVideoJob(trimmed, voice, style).id });
+  res.json({ jobId: startVideoJob(trimmed, voice, style, audioStyle).id });
 });
 
 app.listen(PORT, () => {

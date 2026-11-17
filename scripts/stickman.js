@@ -191,28 +191,216 @@ const ACTIONS = {
       mood: "smile",
     };
   },
+  sit(t) {
+    // seated profile: thighs forward, shins down (pairs with chair/couch props)
+    const b = Math.sin(t * 2) * 0.03;
+    return {
+      ...STAND,
+      lean: 0.06 + b,
+      armL: [-0.7, 0.1], armR: [0.7, -0.1],
+      legL: [1.25, -1.35], legR: [1.45, -1.5],
+      lift: -14,
+      mood: "smile",
+    };
+  },
+  lie(t) {
+    // asleep — flat on the back on the bed, gentle breathing
+    const z = Math.sin(t * 1.4) * 2;
+    return {
+      ...STAND,
+      rot: 1.5,
+      lift: 40 + z,
+      armL: [-0.15, -0.1], armR: [0.15, 0.1],
+      legL: [-0.06, 0.02], legR: [0.06, -0.02],
+      mood: "sleep",
+    };
+  },
+  cry(t) {
+    const sh = Math.sin(t * 7) * 0.05;
+    return {
+      ...STAND,
+      lean: 0.1 + sh,
+      head: 0.15,
+      armL: [-2.45, -2.05], armR: [2.45, 2.05],
+      legL: [-0.2, -0.1], legR: [0.2, 0.1],
+      mood: "sad",
+    };
+  },
+  laugh(t) {
+    const b = Math.abs(Math.sin(t * 5.5));
+    return {
+      ...STAND,
+      lean: 0.12,
+      head: -0.18,
+      armL: [-0.9, -1.3], armR: [1.1, 0.6],
+      lift: b * 5,
+      sx: 1 + b * 0.03,
+      mood: "grin",
+    };
+  },
+  eat(t) {
+    // hand cycles between the plate and the mouth
+    const c = (Math.sin(t * 6) + 1) / 2;
+    return {
+      ...STAND,
+      lean: 0.18,
+      armL: [1.0, 0.4],
+      armR: [lerp(0.95, 0.55, c), lerp(0.35, 2.0, c)],
+      mood: "flat",
+      prop: "table",
+    };
+  },
+  drink(t) {
+    const c = (Math.sin(t * 3) + 1) / 2;
+    return {
+      ...STAND,
+      head: c * -0.18,
+      armL: [-0.3, -0.2],
+      armR: [lerp(0.95, 0.5, c), lerp(0.4, 2.15, c)],
+      mood: "smile",
+    };
+  },
+  open(t, d) {
+    // reach → lift the lid → celebrate (gift-box moments)
+    const span = Math.min(2.0, Math.max(1.0, d));
+    const u = clamp01(t / span);
+    const reach = { ...STAND, lean: 0.22, armL: [0.85, 0.25], armR: [0.95, 0.25], legL: [-0.25, -0.1], legR: [0.25, 0.1], mood: "flat" };
+    const lift = { ...STAND, lean: 0.16, armL: [0.55, 0.1], armR: [1.45, 0.1], lift: 8, mood: "o" };
+    const joy = { ...STAND, armL: [-1.2, -0.4], armR: [1.2, 0.4], lift: Math.abs(Math.sin(t * 5)) * 10, mood: "grin" };
+    if (u < 0.3) return mixPose(STAND, reach, u / 0.3);
+    if (u < 0.6) return mixPose(reach, lift, (u - 0.3) / 0.3);
+    return mixPose(lift, joy, (u - 0.6) / 0.4);
+  },
+  knock(t) {
+    const k = Math.abs(Math.sin(t * 7));
+    return {
+      ...STAND,
+      lean: 0.16,
+      armL: [-0.5, -0.3],
+      armR: [lerp(0.8, 1.35, k), 0.05],
+      mood: "flat",
+      fx: k > 0.95 ? "impact" : "",
+    };
+  },
+  throw(t, d) {
+    const span = Math.min(1.4, Math.max(0.8, d));
+    const u = clamp01(t / span);
+    const wind = { ...STAND, lean: -0.12, armL: [-0.5, -0.4], armR: [-2.5, -0.6], legR: [0.3, 0.15], mood: "flat" };
+    const release = { ...STAND, lean: 0.28, armL: [-0.3, -0.2], armR: [1.7, 0.05], legL: [-0.4, -0.2], legR: [0.25, 0.1], mood: "o" };
+    if (u < 0.35) return mixPose(STAND, wind, u / 0.35);
+    if (u < 0.55) return mixPose(wind, release, (u - 0.35) / 0.2);
+    return mixPose(release, STAND, (u - 0.55) / 0.45);
+  },
+  catch(t, d) {
+    const span = Math.min(1.4, Math.max(0.8, d));
+    const u = clamp01(t / span);
+    const reach = { ...STAND, lean: 0.12, armL: [1.35, 0.05], armR: [1.15, 0.05], legL: [-0.35, -0.15], mood: "o" };
+    const hold = { ...STAND, lean: 0.05, armL: [0.9, -0.35], armR: [1.0, 0.35], mood: "grin" };
+    if (u < 0.45) return mixPose(STAND, reach, u / 0.45);
+    return mixPose(reach, hold, (u - 0.45) / 0.55);
+  },
+  carry(t) {
+    const b = Math.abs(Math.sin(t * 3.5)) * 2;
+    return {
+      ...STAND,
+      lean: 0.1,
+      armL: [1.05, -0.55], armR: [0.95, 0.55],
+      lift: -2 + b,
+      legL: [-0.2, -0.1], legR: [0.2, 0.1],
+      mood: "smile",
+    };
+  },
+  push(t) {
+    const s = Math.sin(t * 3);
+    return {
+      ...STAND,
+      lean: 0.3,
+      armL: [1.5, 0.0], armR: [1.3, 0.0],
+      legL: [-0.5 + s * 0.15, -0.2], legR: [0.35 - s * 0.15, 0.15],
+      lift: Math.abs(s) * 3,
+      mood: "flat",
+    };
+  },
+  climb(t) {
+    const s = Math.sin(t * 4.5);
+    return {
+      ...STAND,
+      lean: -0.08,
+      armL: [-2.3 + s * 0.55, -0.5], armR: [2.3 - s * 0.55, 0.5],
+      legL: [-0.3 - s * 0.45, 0.5], legR: [0.3 + s * 0.45, -0.5],
+      lift: 6 + Math.abs(s) * 6,
+      mood: "flat",
+    };
+  },
+  swim(t) {
+    const s = Math.sin(t * 5);
+    return {
+      ...STAND,
+      rot: 1.15,
+      lift: -30,
+      armL: [-2.6 + s * 0.7, -0.4], armR: [2.2 - s * 0.7, 0.4],
+      legL: [-0.25 - s * 0.3, 0.25], legR: [0.25 + s * 0.3, -0.25],
+      head: -0.1,
+      mood: "smile",
+    };
+  },
+  bow(t, d) {
+    const span = Math.min(1.6, Math.max(1.0, d));
+    const u = clamp01(t / span);
+    const folded = { ...STAND, lean: 1.05, armL: [0.35, 0.3], armR: [-0.35, -0.3], head: 0.15, mood: "smile" };
+    if (u < 0.4) return mixPose(STAND, folded, u / 0.4);
+    if (u < 0.6) return folded;
+    return mixPose(folded, STAND, (u - 0.6) / 0.4);
+  },
+  stretch(t) {
+    const s = Math.sin(t * 2.5);
+    return {
+      ...STAND,
+      lean: s * 0.05,
+      armL: [-2.7, -0.15], armR: [2.7, 0.15],
+      lift: 4 + Math.abs(s) * 3,
+      head: -0.1,
+      mood: "smile",
+    };
+  },
 };
 
 /* Keyword → action (checked in object order; matchAction uses word-boundary
  * regexes so substrings like "hi" in "shine" don't match). */
 const KEYWORDS = {
   write: ["write", "writes", "writing", "wrote", "novel", "notebook", "scribble", "scribbles", "scribbling", "pencil", "pen", "desk", "essay", "notes", "type", "typing", "keyboard"],
-  cook: ["cook", "cooking", "whisk", "whisking", "eggs", "kitchen", "food", "meal", "sandwich", "chef", "recipe", "stomach", "sizzle"],
-  dance: ["dance", "dancing", "polka", "lo-fi", "beats"],
-  run: ["run", "runs", "running", "sprint", "rush", "flee", "chase", "hurry", "frantic", "frantically", "fast", "quick"],
-  jump: ["jump", "jumps", "jumped", "leap", "hop", "bounce", "dive", "dives", "dives"],
-  fall: ["fall", "falls", "fell", "falling", "trip", "slip", "slipped", "drop", "dropped", "crash", "tumble", "face-plant", "faceplant", "thud"],
-  celebrate: ["win", "wins", "won", "celebrate", "triumph", "triumphant", "success", "proud", "hooray", "finally", "victory", "nailed it"],
-  think: ["think", "thought", "wonder", "why", "how", "maybe", "idea", "question", "imagine", "what if", "suppose", "wondering", "science", "research"],
-  wave: ["hello", "hi", "hey", "wave", "waves", "greet", "bye", "goodbye", "welcome", "meet"],
-  point: ["look", "looks", "see", "watch", "notice", "point", "spot", "appear", "appears", "eyes widen"],
-  walk: ["walk", "walked", "walking", "step", "go", "went", "move", "moving", "travel", "journey", "away"],
+  cook: ["cook", "cooks", "cooked", "cooking", "whisk", "whisking", "eggs", "kitchen", "food", "meal", "sandwich", "chef", "recipe", "stomach", "sizzle"],
+  dance: ["dance", "dances", "danced", "dancing", "polka", "lo-fi", "beats"],
+  run: ["run", "runs", "ran", "running", "sprint", "sprints", "sprinting", "rush", "flee", "flees", "chase", "chases", "chasing", "hurry", "hurries", "hurrying", "frantic", "frantically", "fast", "quick"],
+  jump: ["jump", "jumps", "jumped", "jumping", "leap", "leaps", "leaped", "leaping", "hop", "hops", "hopping", "bounce", "bounces", "bouncing", "dive", "dives", "diving"],
+  fall: ["fall", "falls", "fell", "falling", "trip", "trips", "slip", "slips", "slipped", "slipping", "drop", "drops", "dropped", "dropping", "crash", "crashes", "crashing", "tumble", "tumbles", "tumbling", "face-plant", "faceplant", "thud"],
+  celebrate: ["win", "wins", "won", "winning", "celebrate", "celebrates", "celebrated", "celebrating", "celebration", "triumph", "triumphant", "success", "succeeds", "proud", "hooray", "hurray", "finally", "victory", "nailed it", "cheer", "cheers", "cheering"],
+  think: ["think", "thinks", "thinking", "thought", "wonder", "wonders", "wondering", "why", "how", "maybe", "idea", "ideas", "question", "imagine", "imagines", "imagining", "what if", "suppose", "science", "research"],
+  wave: ["hello", "hi", "hey", "wave", "waves", "waved", "waving", "greet", "greets", "greeting", "bye", "goodbye", "welcome", "meets", "meet"],
+  point: ["look", "looks", "looked", "looking", "see", "sees", "saw", "seen", "watch", "watches", "watching", "notice", "notices", "point", "points", "pointing", "spot", "spots", "spotted", "appear", "appears", "eyes widen"],
+  walk: ["walk", "walks", "walked", "walking", "step", "steps", "go", "went", "gone", "move", "moves", "moving", "travel", "travels", "traveling", "journey", "away"],
+  cry: ["cry", "cries", "crying", "sob", "sobs", "sobbing", "tear", "tears", "tearful", "weep", "weeps", "weeping", "sad", "heartbroken", "upset", "depressed", "heart breaks", "heartbreak"],
+  laugh: ["laugh", "laughs", "laughing", "giggle", "giggles", "giggling", "hilarious", "cracks up", "can't stop laughing"],
+  eat: ["eat", "eats", "eating", "ate", "bite", "bites", "biting", "munch", "munching", "snack", "snacks", "taste", "tastes", "tasting", "hungry", "burger", "pizza", "sandwich"],
+  drink: ["drink", "drinks", "drinking", "drank", "sip", "sips", "sipped", "sipping", "coffee", "tea", "juice", "lemonade", "soda", "thirsty", "gulps"],
+  open: ["open", "opens", "opened", "opening", "unwrap", "unwraps", "unwrapping", "unbox", "lid", "reveal", "reveals", "revealed", "rips open", "tears open"],
+  knock: ["knock", "knocks", "knocking", "knocked", "doorbell", "raps"],
+  throw: ["throw", "throws", "threw", "throwing", "toss", "tosses", "tossing", "hurl", "hurls", "launch", "launches"],
+  catch: ["catch", "catches", "caught", "catching", "grab", "grabs", "grabbing", "snatch", "snatches", "receive", "receives", "holds up"],
+  carry: ["carry", "carries", "carrying", "carried", "hold", "holds", "holding", "hug", "hugs", "hugging", "cradle", "cradles", "embrace", "embraces"],
+  push: ["push", "pushes", "pushing", "shove", "shoves", "pull", "pulls", "pulling", "drag", "drags", "dragging", "haul", "hauls"],
+  climb: ["climb", "climbs", "climbing", "climbed", "scale", "scales", "stairs", "ladder", "mountain", "hill"],
+  swim: ["swim", "swims", "swimming", "swam", "pool", "ocean", "sea", "beach", "waves at the beach"],
+  sit: ["sit", "sits", "sitting", "sat", "sit down", "sits down", "sits at", "settle", "settles"],
+  lie: ["lie", "lies", "lay", "lying", "sleep", "sleeps", "sleeping", "asleep", "nap", "naps", "napping", "bedtime", "snores", "snoring", "goes to bed", "goes to sleep"],
+  bow: ["bow", "bows", "bowing", "bowed", "thank you", "thanks", "grateful", "gratitude"],
+  stretch: ["stretch", "stretches", "stretching", "yawn", "yawns", "yawning", "wake up", "wakes up", "waking up", "gets up", "morning routine"],
 };
 const FALLBACK_ACTIONS = ["talk", "walk", "point", "think", "wave"];
 
 const KEYWORD_RE = Object.entries(KEYWORDS).map(([act, keys]) => [
   act,
-  keys.map((k) => new RegExp(`\\b${k.replace(/[^a-z0-9 ]/g, ".")}`, "i")),
+  keys.map((k) => new RegExp(`\\b${k.replace(/[^a-z0-9 ]/g, ".")}\\b`, "i")),
 ]);
 
 /** Match a block of text to an action, or null. */
@@ -367,19 +555,20 @@ function drawFace(ctx, hx, hy, mood, t, speaking) {
   const my = hy + 14;
   const browY = hy - 17;
   const worried = mood === "o";
+  const sad = mood === "sad";
 
   // eyebrows
   ctx.strokeStyle = "#141414";
   ctx.lineWidth = 3;
   for (const side of [-1, 1]) {
     ctx.beginPath();
-    ctx.moveTo(hx + side * exo - side * 5, browY + (worried ? 2.5 : 0));
-    ctx.lineTo(hx + side * exo + side * 5, browY - (worried ? 2.5 : 0));
+    ctx.moveTo(hx + side * exo - side * 5, browY + (worried ? 2.5 : sad ? -2.5 : 0));
+    ctx.lineTo(hx + side * exo + side * 5, browY - (worried ? 2.5 : sad ? -2.5 : 0));
     ctx.stroke();
   }
 
   // eyes
-  if (blink) {
+  if (blink || mood === "sleep") {
     ctx.lineWidth = 2.6;
     for (const side of [-1, 1]) {
       ctx.beginPath();
@@ -447,7 +636,18 @@ function drawFace(ctx, hx, hy, mood, t, speaking) {
     ctx.beginPath();
     ctx.ellipse(hx, my + 1, 4.5, 3.5, 0, 0, Math.PI * 2);
     ctx.stroke();
-  } else if (mood === "flat" || mood === "think") {
+  } else if (mood === "sad") {
+    // frown + a falling tear
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(hx - 6, my + 3);
+    ctx.quadraticCurveTo(hx, my - 2, hx + 6, my + 3);
+    ctx.stroke();
+    ctx.fillStyle = "#6ec1ff";
+    ctx.beginPath();
+    ctx.arc(hx - 11, ey + 6 + ((t * 16) % 14), 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (mood === "flat" || mood === "think" || mood === "sleep") {
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(hx - 6, my);
@@ -538,6 +738,87 @@ function drawAccessory(ctx, ch, hx, hy) {
   }
 }
 
+/** Scene props behind the character — anchored to the character's GROUND
+ * point (y=0 at the floor, negative = up) so poses that rotate or lift the
+ * body (lie, swim, fall) can't drag or tilt them. Drawn before the body
+ * transform, so they always stay behind the figure. */
+function drawProp(ctx, prop) {
+  if (prop === "desk") {
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
+    ctx.fillRect(18, -152, 205, 14);  // top
+    ctx.fillRect(32, -138, 11, 136);  // legs
+    ctx.fillRect(193, -138, 11, 136);
+  } else if (prop === "bed") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-196, -128, 16, 128); // headboard
+    ctx.fillRect(-196, -34, 184, 30);  // mattress
+    ctx.fillRect(-184, -55, 53, 21);   // pillow
+    ctx.fillRect(-184, -4, 11, 16);    // legs
+    ctx.fillRect(-34, -4, 11, 16);
+  } else if (prop === "tree") {
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath(); ctx.arc(-138, -186, 67, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-86, -238, 46, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.moveTo(-115, -2); ctx.quadraticCurveTo(-110, -94, -120, -152); ctx.stroke();
+  } else if (prop === "couch") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-201, -85, 30, 97);   // back
+    ctx.fillRect(-201, -27, 150, 30);  // seat
+    ctx.fillRect(-71, -59, 18, 62);    // armrest
+  } else if (prop === "box") {
+    // gift box with a lid and ribbon (the classic "open the present" prop)
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(69, -170, 85, 76);    // body
+    ctx.fillRect(62, -188, 99, 18);    // lid
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(106, -188, 11, 94);   // ribbon
+  } else if (prop === "door") {
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.fillRect(110, -230, 97, 230);
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillRect(189, -138, 10, 10);   // handle
+  } else if (prop === "window") {
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.fillRect(-230, -266, 115, 106);
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillRect(-177, -266, 5, 106);  // mullions
+    ctx.fillRect(-230, -218, 115, 5);
+  } else if (prop === "table") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-46, -152, 173, 14);  // top
+    ctx.fillRect(-32, -138, 11, 138);  // legs
+    ctx.fillRect(110, -138, 11, 138);
+  } else if (prop === "chair") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(-138, -220, 14, 127); // back
+    ctx.fillRect(-115, -133, 130, 16); // seat (extends under the sitter)
+    ctx.fillRect(-110, -117, 11, 117); // legs
+    ctx.fillRect(-10, -117, 11, 117);
+  } else if (prop === "car") {
+    ctx.fillStyle = "rgba(0,0,0,0.26)";
+    ctx.fillRect(-264, -78, 299, 58);  // body
+    ctx.fillRect(-184, -124, 138, 46); // cabin
+    ctx.beginPath(); ctx.arc(-207, -23, 23, 0, Math.PI * 2); ctx.fill(); // wheels
+    ctx.beginPath(); ctx.arc(-46, -23, 23, 0, Math.PI * 2); ctx.fill();
+  } else if (prop === "ball") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.beginPath(); ctx.arc(104, -34, 34, 0, Math.PI * 2); ctx.fill();
+  } else if (prop === "tv") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(-246, -266, 127, 94); // panel
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillRect(-191, -172, 14, 172); // stand
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(-225, -9, 83, 9);     // base
+  } else if (prop === "plant") {
+    ctx.fillStyle = "rgba(0,0,0,0.26)";
+    ctx.fillRect(110, -52, 51, 52);    // pot
+    ctx.beginPath(); ctx.arc(136, -108, 32, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(110, -130, 21, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 /** Stick figure: hip at (0,0) local, feet ~80 below, head above the spine.
  * t drives breathing/blinking; speaking opens the mouth; extraProp draws a
  * scene prop (desk/bed/tree/couch) behind the character. */
@@ -578,6 +859,16 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
     ctx.restore();
   }
 
+  // scene prop behind the character — ground-anchored, drawn before the body
+  // transform so rotating poses (lie/swim/fall) can't tilt or move it
+  const prop = pose.prop || extraProp;
+  if (prop) {
+    ctx.save();
+    ctx.translate(cx, groundY);
+    drawProp(ctx, prop);
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.translate(cx, hipY);
   if (pose.rot) ctx.rotate(pose.rot);
@@ -607,33 +898,6 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
     path();
     return [ex, ey];
   };
-
-  // scene props (behind the character) — simple line-art furniture/nature
-  const prop = pose.prop || extraProp;
-  if (prop === "desk") {
-    ctx.fillStyle = "rgba(0,0,0,0.38)";
-    ctx.fillRect(16, -50, 178, 12);
-    ctx.fillRect(28, -38, 10, 118);
-    ctx.fillRect(168, -38, 10, 118);
-  } else if (prop === "bed") {
-    ctx.fillStyle = "rgba(0,0,0,0.34)";
-    ctx.fillRect(-170, -30, 14, 112); // headboard
-    ctx.fillRect(-170, 52, 160, 26);  // mattress
-    ctx.fillRect(-160, 34, 46, 18);   // pillow
-    ctx.fillRect(-160, 78, 10, 14);   // legs
-    ctx.fillRect(-30, 78, 10, 14);
-  } else if (prop === "tree") {
-    ctx.fillStyle = "rgba(0,0,0,0.22)";
-    ctx.beginPath(); ctx.arc(-120, -80, 58, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(-75, -125, 40, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 10;
-    ctx.beginPath(); ctx.moveTo(-100, 80); ctx.quadraticCurveTo(-96, 0, -104, -50); ctx.stroke();
-  } else if (prop === "couch") {
-    ctx.fillStyle = "rgba(0,0,0,0.34)";
-    ctx.fillRect(-175, 8, 26, 84);    // back
-    ctx.fillRect(-175, 58, 130, 26);  // seat
-    ctx.fillRect(-62, 30, 16, 54);    // armrest
-  }
 
   // legs (from the hip)
   seg(0, 0, pose.legL[0], 40, pose.legL[1], 40);
@@ -815,16 +1079,26 @@ const PROP_KEYS = {
   tree: ["park", "tree", "outside", "forest", "garden", "walk", "walked", "journey", "away", "nature"],
   couch: ["watch", "watches", "tv", "couch", "sofa", "relax", "rest", "television"],
   desk: ["desk", "write", "writes", "writing", "work", "office", "laptop", "study", "notebook"],
+  box: ["gift", "present", "box", "package", "parcel", "wrap", "wrapping", "unbox", "surprise"],
+  door: ["door", "doorstep", "doorbell", "entrance", "knock", "knocks", "knocking", "knocked"],
+  window: ["window", "windows", "windowsill"],
+  table: ["table", "dinner", "dining", "plate", "plates", "breakfast", "lunch", "cake"],
+  chair: ["chair", "stool", "bench", "armchair"],
+  car: ["car", "drive", "drives", "driving", "drove", "road", "street", "taxi", "bus", "traffic"],
+  ball: ["ball", "football", "soccer", "basketball", "baseball"],
+  tv: ["television", "channel", "movie", "news"],
+  plant: ["plant", "plants", "flower", "flowers", "pot", "garden"],
 };
 /* The prop whose keyword appears FIRST in reading order wins, so "walks
- * outside toward a tree ... morning sky" is a tree scene, not a bed. */
+ * outside toward a tree ... morning sky" is a tree scene, not a bed.
+ * Word-boundary matching (like matchAction) so "carries" doesn't pick car. */
 function matchProp(text) {
   const t = String(text).toLowerCase();
   let best = null;
   for (const [prop, keys] of Object.entries(PROP_KEYS)) {
     for (const k of keys) {
-      const at = t.indexOf(k);
-      if (at >= 0 && (!best || at < best.at)) best = { at, prop };
+      const m = new RegExp(`\\b${k.replace(/[^a-z0-9 ]/g, ".")}\\b`).exec(t);
+      if (m && (!best || m.index < best.at)) best = { at: m.index, prop };
     }
   }
   return best ? best.prop : "";

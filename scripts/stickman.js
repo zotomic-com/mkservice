@@ -74,7 +74,7 @@ function mixPose(a, b, u) {
   for (const k of ["armL", "armR", "legL", "legR"]) {
     o[k] = [lerp(a[k][0], b[k][0], u), lerp(a[k][1], b[k][1], u)];
   }
-  for (const k of ["mood", "prop", "fx"]) o[k] = u > 0.5 ? b[k] : a[k];
+  for (const k of ["mood", "prop", "fx", "holdIt"]) o[k] = u > 0.5 ? b[k] : a[k];
   return o;
 }
 
@@ -248,6 +248,7 @@ const ACTIONS = {
       armR: [lerp(0.95, 0.55, c), lerp(0.35, 2.0, c)],
       mood: "flat",
       prop: "table",
+      holdIt: true,
     };
   },
   drink(t) {
@@ -258,6 +259,7 @@ const ACTIONS = {
       armL: [-0.3, -0.2],
       armR: [lerp(0.95, 0.5, c), lerp(0.4, 2.15, c)],
       mood: "smile",
+      holdIt: true,
     };
   },
   open(t, d) {
@@ -285,7 +287,7 @@ const ACTIONS = {
   throw(t, d) {
     const span = Math.min(1.4, Math.max(0.8, d));
     const u = clamp01(t / span);
-    const wind = { ...STAND, lean: -0.12, armL: [-0.5, -0.4], armR: [-2.5, -0.6], legR: [0.3, 0.15], mood: "flat" };
+    const wind = { ...STAND, lean: -0.12, armL: [-0.5, -0.4], armR: [-2.5, -0.6], legR: [0.3, 0.15], mood: "flat", holdIt: true };
     const release = { ...STAND, lean: 0.28, armL: [-0.3, -0.2], armR: [1.7, 0.05], legL: [-0.4, -0.2], legR: [0.25, 0.1], mood: "o" };
     if (u < 0.35) return mixPose(STAND, wind, u / 0.35);
     if (u < 0.55) return mixPose(wind, release, (u - 0.35) / 0.2);
@@ -295,7 +297,7 @@ const ACTIONS = {
     const span = Math.min(1.4, Math.max(0.8, d));
     const u = clamp01(t / span);
     const reach = { ...STAND, lean: 0.12, armL: [1.35, 0.05], armR: [1.15, 0.05], legL: [-0.35, -0.15], mood: "o" };
-    const hold = { ...STAND, lean: 0.05, armL: [0.9, -0.35], armR: [1.0, 0.35], mood: "grin" };
+    const hold = { ...STAND, lean: 0.05, armL: [0.9, -0.35], armR: [1.0, 0.35], mood: "grin", holdIt: true };
     if (u < 0.45) return mixPose(STAND, reach, u / 0.45);
     return mixPose(reach, hold, (u - 0.45) / 0.55);
   },
@@ -308,6 +310,7 @@ const ACTIONS = {
       lift: -2 + b,
       legL: [-0.2, -0.1], legR: [0.2, 0.1],
       mood: "smile",
+      holdIt: true,
     };
   },
   push(t) {
@@ -819,10 +822,58 @@ function drawProp(ctx, prop) {
   }
 }
 
+/** Small object drawn AT the character's hands (local body coords, hip at
+ * (0,0)) — same translucent style as the ground props. */
+function drawHeldObject(ctx, held, x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (held === "box") {
+    // mini gift box with lid + ribbon
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
+    ctx.fillRect(-23, -30, 46, 36);
+    ctx.fillRect(-28, -39, 56, 11);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(-5, -39, 10, 45);     // vertical ribbon
+    ctx.fillRect(-23, -14, 46, 5);     // horizontal ribbon
+  } else if (held === "ball") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.beginPath(); ctx.arc(-6, -6, 6, 0, Math.PI * 2); ctx.fill();
+  } else if (held === "book") {
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
+    ctx.fillRect(-19, -13, 38, 26);
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillRect(-19, -13, 6, 26);     // spine
+  } else if (held === "plate") {
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath(); ctx.ellipse(0, 0, 25, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.beginPath(); ctx.ellipse(0, -1, 13, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+  } else if (held === "cup") {
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
+    ctx.fillRect(-8, -9, 16, 18);      // body
+    ctx.strokeStyle = "rgba(0,0,0,0.32)";
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(10, 0, 6, -Math.PI / 2, Math.PI / 2); ctx.stroke(); // handle
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-6, -9); ctx.lineTo(6, -9); ctx.stroke(); // rim
+  } else if (held === "phone") {
+    ctx.fillStyle = "rgba(0,0,0,0.34)";
+    ctx.fillRect(-8, -13, 16, 26);
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillRect(-6, -11, 12, 22);     // screen
+  }
+  ctx.restore();
+}
+
 /** Stick figure: hip at (0,0) local, feet ~80 below, head above the spine.
  * t drives breathing/blinking; speaking opens the mouth; extraProp draws a
- * scene prop (desk/bed/tree/couch) behind the character. */
-function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraProp = "") {
+ * scene prop (desk/bed/tree/couch) behind the character; held (interaction
+ * DSL step 1) draws a small object (box/ball/book/plate/cup/phone) IN the
+ * hands — suppressing the matching ground prop so it isn't duplicated. */
+function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraProp = "", held = "") {
   const s = 1.15;
   const sy = pose.sy || 1;
   const sx = pose.sx || 1;
@@ -860,9 +911,10 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
   }
 
   // scene prop behind the character — ground-anchored, drawn before the body
-  // transform so rotating poses (lie/swim/fall) can't tilt or move it
+  // transform so rotating poses (lie/swim/fall) can't tilt or move it.
+  // If the character is HOLDING that same prop in their hands, skip it here.
   const prop = pose.prop || extraProp;
-  if (prop) {
+  if (prop && prop !== held) {
     ctx.save();
     ctx.translate(cx, groundY);
     drawProp(ctx, prop);
@@ -919,9 +971,16 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
   ctx.strokeStyle = ch.color;
   spine();
 
-  // arms (from the shoulder)
-  seg(shX, shY, pose.armL[0], 34, pose.armL[1], 32);
-  seg(shX, shY, pose.armR[0], 34, pose.armR[1], 32);
+  // arms (from the shoulder) — remember where the hands end up
+  const handL = seg(shX, shY, pose.armL[0], 34, pose.armL[1], 32);
+  const handR = seg(shX, shY, pose.armR[0], 34, pose.armR[1], 32);
+
+  // held object sits between the hands (average of both hand positions) —
+  // only while the pose actually says it's being held (throw releases it,
+  // catch only holds it after the grab, so it tracks the animation phases)
+  if (held && pose.holdIt) {
+    drawHeldObject(ctx, held, (handL[0] + handR[0]) / 2, (handL[1] + handR[1]) / 2);
+  }
 
   // head — big expressive cartoon head
   const hy = shY - 36;
@@ -1089,6 +1148,32 @@ const PROP_KEYS = {
   tv: ["television", "channel", "movie", "news"],
   plant: ["plant", "plants", "flower", "flowers", "pot", "garden"],
 };
+
+/* Held objects (interaction DSL step 1): when the Visual text mentions one of
+ * these AND the action carries/throws/catches/eats/drinks it, the object is
+ * drawn IN the character's hands instead of on the ground. */
+const HELD_KEYS = {
+  box: ["gift", "present", "box", "parcel", "package"],
+  ball: ["ball", "football", "soccer", "basketball", "volleyball"],
+  book: ["book", "books", "notebook", "diary", "journal"],
+  plate: ["plate", "meal", "dinner", "food", "cake", "lunch", "breakfast"],
+  cup: ["cup", "mug", "coffee", "tea", "juice", "lemonade", "soda", "bottle"],
+  phone: ["phone", "mobile", "cellphone", "smartphone", "texting", "call"],
+};
+
+/** Which object the text says the character interacts with (word-boundary,
+ * first in reading order wins — same rule as matchProp). */
+function matchHeld(text) {
+  const t = String(text).toLowerCase();
+  let best = null;
+  for (const [held, keys] of Object.entries(HELD_KEYS)) {
+    for (const k of keys) {
+      const m = new RegExp(`\\b${k.replace(/[^a-z0-9 ]/g, ".")}\\b`).exec(t);
+      if (m && (!best || m.index < best.at)) best = { at: m.index, held };
+    }
+  }
+  return best ? best.held : "";
+}
 /* The prop whose keyword appears FIRST in reading order wins, so "walks
  * outside toward a tree ... morning sky" is a tree scene, not a bed.
  * Word-boundary matching (like matchAction) so "carries" doesn't pick car. */
@@ -1121,6 +1206,13 @@ async function renderStickmanFrames(opts) {
     action: ACTIONS[s.action] ? s.action : "talk",
     bg: auto ? pickAutoBg(`${s.title || ""} ${s.colors || ""} ${s.action}`, i) : null,
     prop: matchProp(`${s.title || ""} ${s.visual || ""} ${s.colors || ""}`),
+    // interaction DSL step 1: if the action holds an object at ANY point in
+    // its animation (throw winds up holding, catch holds after the grab) AND
+    // the text mentions a carryable one, it's drawn in the hands
+    held: (ACTIONS[s.action] && [0, 0.12, 0.3, 0.5, 0.8].some((u) => {
+      const d = Math.max(0.5, s.end - s.start);
+      return ACTIONS[s.action](u * d, d).holdIt;
+    })) ? matchHeld(`${s.title || ""} ${s.visual || ""}`) : "",
   }));
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
@@ -1161,7 +1253,7 @@ async function renderStickmanFrames(opts) {
         const from = ACTIONS[prev.action](prev.end - prev.start, prev.end - prev.start);
         pose = mixPose(from, pose, (t - scene.start) / 0.6);
       }
-      drawFigure(ctx, ch, pose, W / 2, GROUND_Y, t, !!g, scene.prop);
+      drawFigure(ctx, ch, pose, W / 2, GROUND_Y, t, !!g, scene.prop, scene.held);
     }
     ctx.restore();
     if (scene && scene.title && t - scene.start < 2.4) drawSceneTitle(ctx, scene.title, (t - scene.start) / 2.4);
@@ -1222,4 +1314,4 @@ function drawSceneTitle(ctx, title, u) {
   ctx.restore();
 }
 
-module.exports = { CHARACTERS, renderStickmanFrames, parseStoryScript, pickAction, matchAction, matchProp };
+module.exports = { CHARACTERS, renderStickmanFrames, parseStoryScript, pickAction, matchAction, matchProp, matchHeld };

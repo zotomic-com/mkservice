@@ -74,30 +74,41 @@ function mixPose(a, b, u) {
   for (const k of ["armL", "armR", "legL", "legR"]) {
     o[k] = [lerp(a[k][0], b[k][0], u), lerp(a[k][1], b[k][1], u)];
   }
-  for (const k of ["mood", "prop", "fx", "holdIt", "seated"]) o[k] = u > 0.5 ? b[k] : a[k];
+  for (const k of ["mood", "prop", "fx", "holdIt", "seated", "away"]) o[k] = u > 0.5 ? b[k] : a[k];
   return o;
 }
 
 const ACTIONS = {
   walk(t) {
     const s = Math.sin(t * 5);
+    const c = Math.cos(t * 5);
+    // real stepping: the knee bends while its thigh swings forward (foot
+    // lifts off), then straightens at heel-strike so the foot plants AHEAD
+    // of the body; the stance leg stays straight and pushes off behind.
+    // (the old cycle kept both shins near the thighs — feet slid like a
+    // moonwalk instead of stepping)
+    const kneeL = -0.9 * Math.max(0, c) * (1 - clamp01(s));
+    const kneeR = -0.9 * Math.max(0, -c) * (1 - clamp01(-s));
     return {
       ...STAND,
       lean: 0.08,
       armL: [0.35 + s * 0.45, 0.3], armR: [0.35 - s * 0.45, 0.3],
-      legL: [-0.12 - s * 0.55, Math.max(0, s) * 0.5], legR: [-0.12 + s * 0.55, Math.max(0, -s) * 0.5],
-      lift: Math.abs(s) * 4,
+      legL: [0.5 * s, kneeL], legR: [-0.5 * s, kneeR],
+      lift: Math.abs(c) * 3.5 + 1, // body bobs twice per full stride
       mood: "smile",
     };
   },
   run(t) {
     const s = Math.sin(t * 8.5);
+    const c = Math.cos(t * 8.5);
+    const kneeL = -1.15 * Math.max(0, c) * (1 - clamp01(s));
+    const kneeR = -1.15 * Math.max(0, -c) * (1 - clamp01(-s));
     return {
       ...STAND,
       lean: 0.32,
       armL: [0.5 + s * 0.85, 0.9], armR: [0.5 - s * 0.85, 0.9],
-      legL: [-0.12 - s * 0.9, Math.max(0, s) * 1.0], legR: [-0.12 + s * 0.9, Math.max(0, -s) * 1.0],
-      lift: Math.abs(s) * 9 + 2,
+      legL: [0.75 * s, kneeL], legR: [-0.75 * s, kneeR],
+      lift: Math.abs(c) * 9 + 2,
       mood: "smile",
     };
   },
@@ -268,15 +279,27 @@ const ACTIONS = {
     };
   },
   open(t, d) {
-    // reach → lift the lid → celebrate (gift-box moments)
+    // reach (holding the box in front) → lift the lid → celebrate — the
+    // held object vanishes in the joy phase, as if the lid came off
     const span = Math.min(2.0, Math.max(1.0, d));
     const u = clamp01(t / span);
-    const reach = { ...STAND, lean: 0.22, armL: [0.85, 0.25], armR: [0.95, 0.25], legL: [-0.25, -0.1], legR: [0.25, 0.1], mood: "flat" };
-    const lift = { ...STAND, lean: 0.16, armL: [0.55, 0.1], armR: [1.45, 0.1], lift: 8, mood: "o" };
-    const joy = { ...STAND, armL: [-1.2, -0.4], armR: [1.2, 0.4], lift: Math.abs(Math.sin(t * 5)) * 10, mood: "grin" };
+    const reach = { ...STAND, lean: 0.22, armL: [0.85, 0.25], armR: [0.95, 0.25], legL: [-0.25, -0.1], legR: [0.25, 0.1], mood: "flat", holdIt: true };
+    const lift = { ...STAND, lean: 0.16, armL: [0.55, 0.1], armR: [1.45, 0.1], lift: 8, mood: "o", holdIt: true };
+    const joy = { ...STAND, armL: [-1.2, -0.4], armR: [1.2, 0.4], lift: Math.abs(Math.sin(t * 5)) * 10, mood: "grin", away: true };
     if (u < 0.3) return mixPose(STAND, reach, u / 0.3);
     if (u < 0.6) return mixPose(reach, lift, (u - 0.3) / 0.3);
     return mixPose(lift, joy, (u - 0.6) / 0.4);
+  },
+  drop(t, d) {
+    // bend down with the object in hands → release it (it reappears as a
+    // ground prop) → straighten back up
+    const span = Math.min(1.6, Math.max(0.9, d));
+    const u = clamp01(t / span);
+    const bend = { ...STAND, lean: 0.3, armL: [0.95, 0.35], armR: [1.05, 0.3], legL: [0.45, 0.85], legR: [-0.35, -0.55], lift: -10, mood: "flat", holdIt: true };
+    const released = { ...STAND, lean: 0.26, armL: [0.9, 0.35], armR: [1.0, 0.3], legL: [0.45, 0.85], legR: [-0.35, -0.55], lift: -12, mood: "flat" };
+    if (u < 0.4) return mixPose(STAND, bend, u / 0.4);
+    if (u < 0.6) return released;
+    return mixPose(released, STAND, (u - 0.6) / 0.4);
   },
   knock(t) {
     const k = Math.abs(Math.sin(t * 7));
@@ -293,10 +316,11 @@ const ACTIONS = {
     const span = Math.min(1.4, Math.max(0.8, d));
     const u = clamp01(t / span);
     const wind = { ...STAND, lean: -0.12, armL: [-0.5, -0.4], armR: [-2.5, -0.6], legR: [0.3, 0.15], mood: "flat", holdIt: true };
-    const release = { ...STAND, lean: 0.28, armL: [-0.3, -0.2], armR: [1.7, 0.05], legL: [-0.4, -0.2], legR: [0.25, 0.1], mood: "o" };
+    const release = { ...STAND, lean: 0.28, armL: [-0.3, -0.2], armR: [1.7, 0.05], legL: [-0.4, -0.2], legR: [0.25, 0.1], mood: "o", away: true };
+    const settle = { ...STAND, lean: 0.18, armL: [-0.3, -0.2], armR: [1.0, 0.05], away: true };
     if (u < 0.35) return mixPose(STAND, wind, u / 0.35);
     if (u < 0.55) return mixPose(wind, release, (u - 0.35) / 0.2);
-    return mixPose(release, STAND, (u - 0.55) / 0.45);
+    return mixPose(release, settle, (u - 0.55) / 0.45);
   },
   catch(t, d) {
     const span = Math.min(1.4, Math.max(0.8, d));
@@ -376,6 +400,7 @@ const ACTIONS = {
 /* Keyword → action (checked in object order; matchAction uses word-boundary
  * regexes so substrings like "hi" in "shine" don't match). */
 const KEYWORDS = {
+  drop: ["puts down", "put down", "put it down", "puts it down", "sets down", "set down", "sets it down", "set it down", "places", "placed", "placing"],
   write: ["write", "writes", "writing", "wrote", "novel", "notebook", "scribble", "scribbles", "scribbling", "pencil", "pen", "desk", "essay", "notes", "type", "typing", "keyboard"],
   cook: ["cook", "cooks", "cooked", "cooking", "whisk", "whisking", "eggs", "kitchen", "food", "meal", "sandwich", "chef", "recipe", "stomach", "sizzle"],
   dance: ["dance", "dances", "danced", "dancing", "polka", "lo-fi", "beats"],
@@ -512,7 +537,7 @@ function hex(c) {
   return s.startsWith("#") ? s : "#" + s.replace(/^0x/, "");
 }
 
-function drawBackground(ctx, style, groundLine, t = 0) {
+function drawBackground(ctx, style, groundLine, t = 0, groundTint = null) {
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, hex(style.c0));
   g.addColorStop(1, hex(style.c1));
@@ -530,6 +555,12 @@ function drawBackground(ctx, style, groundLine, t = 0) {
   // ground
   ctx.fillStyle = "rgba(0,0,0,0.3)";
   ctx.fillRect(-16, groundLine + 4, W + 32, H - groundLine + 12);
+  // surface tint from the storyboard's Colors line (grass/sand/snow/…)
+  if (groundTint) {
+    const [r, g, b, a] = groundTint.rgb;
+    ctx.fillStyle = `rgba(${r},${g},${b},${a * groundTint.a})`;
+    ctx.fillRect(-16, groundLine + 4, W + 32, H - groundLine + 12);
+  }
   ctx.strokeStyle = "rgba(255,255,255,0.28)";
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -824,6 +855,26 @@ function drawProp(ctx, prop) {
     ctx.fillRect(110, -52, 51, 52);    // pot
     ctx.beginPath(); ctx.arc(136, -108, 32, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(110, -130, 21, 0, Math.PI * 2); ctx.fill();
+  } else if (prop === "cup" || prop === "mug") {
+    // small items drawn near the character's feet (drop / scene mention)
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(66, -16, 15, 16);     // body
+    ctx.strokeStyle = "rgba(0,0,0,0.30)";
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(84, -8, 5.5, -Math.PI / 2, Math.PI / 2); ctx.stroke(); // handle
+  } else if (prop === "book") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(62, -8, 34, 8);       // closed book on the floor
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillRect(62, -8, 34, 2);
+  } else if (prop === "phone") {
+    ctx.fillStyle = "rgba(0,0,0,0.30)";
+    ctx.fillRect(68, -10, 13, 10);
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillRect(69, -9, 11, 8);
+  } else if (prop === "plate") {
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath(); ctx.ellipse(90, -5, 24, 6, 0, 0, Math.PI * 2); ctx.fill();
   }
 }
 
@@ -938,9 +989,12 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
 
   // scene prop behind the character — ground-anchored, drawn before the body
   // transform so rotating poses (lie/swim/fall) can't tilt or move it.
-  // If the character is HOLDING that same prop in their hands, skip it here.
+  // Held-object transfer (interaction DSL step 3): while the pose holds the
+  // prop it's hidden from the ground; after a drop the pose releases it and
+  // it appears on the ground; an `away` pose (throw release / open joy)
+  // keeps it off the ground entirely.
   const prop = pose.prop || extraProp;
-  if (prop && prop !== held) {
+  if (prop && !(prop === held && (pose.holdIt || pose.away))) {
     ctx.save();
     ctx.translate(cx, groundY);
     drawProp(ctx, prop);
@@ -1133,6 +1187,36 @@ function pickAutoBg(text, i) {
   return AUTO_BG[AUTO_BG_ORDER[Math.abs(i) % AUTO_BG_ORDER.length]];
 }
 
+/* Ground surface words from the Colors line → tint drawn over the dark
+ * ground so "green grass", "sandy beach", "snowy street" actually render
+ * under the character's feet. First word in reading order wins. */
+const GROUND_TINT_MAP = {
+  grass: [58, 140, 62, 0.55],
+  lawn: [58, 140, 62, 0.55],
+  sand: [232, 196, 120, 0.55],
+  beach: [232, 196, 120, 0.5],
+  desert: [225, 180, 105, 0.5],
+  snow: [235, 242, 248, 0.62],
+  ice: [200, 228, 244, 0.5],
+  water: [34, 98, 170, 0.5],
+  pool: [34, 150, 190, 0.5],
+  wood: [126, 78, 36, 0.5],
+  carpet: [130, 60, 90, 0.4],
+  road: [52, 52, 56, 0.5],
+  street: [52, 52, 56, 0.45],
+  pavement: [90, 90, 95, 0.45],
+  tile: [200, 200, 205, 0.35],
+  marble: [215, 215, 220, 0.4],
+};
+
+function groundTintFor(text) {
+  const t = String(text).toLowerCase();
+  for (const w of t.match(/[a-z-]+/g) || []) {
+    if (GROUND_TINT_MAP[w]) return GROUND_TINT_MAP[w];
+  }
+  return null;
+}
+
 function hexLerp(a, b, u) {
   const pa = parseInt(a.slice(1), 16);
   const pb = parseInt(b.slice(1), 16);
@@ -1173,6 +1257,10 @@ const PROP_KEYS = {
   ball: ["ball", "football", "soccer", "basketball", "baseball"],
   tv: ["television", "channel", "movie", "news"],
   plant: ["plant", "plants", "flower", "flowers", "pot", "garden"],
+  cup: ["cup", "mug", "coffee", "tea", "juice", "lemonade", "soda", "bottle"],
+  book: ["book", "books", "diary", "novel"],
+  phone: ["phone", "mobile", "cellphone", "smartphone"],
+  plate: ["plate", "plates", "meal", "dinner"],
 };
 
 /* Held objects (interaction DSL step 1): when the Visual text mentions one of
@@ -1230,7 +1318,9 @@ async function renderStickmanFrames(opts) {
   const scenes = (opts.scenes || buildScenes(words, Infinity)).map((s, i) => ({
     ...s,
     action: ACTIONS[s.action] ? s.action : "talk",
-    bg: auto ? pickAutoBg(`${s.title || ""} ${s.colors || ""} ${s.action}`, i) : null,
+    // color words from the Colors line decide the background first (it's the
+    // scene's actual color description); title/action keywords only fill in
+    bg: auto ? pickAutoBg(`${s.colors || ""} || ${s.title || ""} ${s.action}`, i) : null,
     prop: matchProp(`${s.title || ""} ${s.visual || ""} ${s.colors || ""}`),
     // interaction DSL step 1: if the action holds an object at ANY point in
     // its animation (throw winds up holding, catch holds after the grab) AND
@@ -1239,6 +1329,9 @@ async function renderStickmanFrames(opts) {
       const d = Math.max(0.5, s.end - s.start);
       return ACTIONS[s.action](u * d, d).holdIt;
     })) ? matchHeld(`${s.title || ""} ${s.visual || ""}`) : "",
+    // ground surface (grass/sand/snow/…) from the Colors line, fading in
+    // over the first 1.2s of the scene like the background colors do
+    ground: auto ? groundTintFor(`${s.colors || ""}`) : null,
   }));
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
@@ -1257,20 +1350,26 @@ async function renderStickmanFrames(opts) {
 
   for (let i = 0; i < total; i++) {
     const t = i / FPS;
-    // gentle camera drift (scene only — captions and titles stay fixed)
-    const z = 1 + 0.03 * Math.sin(t * 0.3 + 1);
-    ctx.save();
-    ctx.translate(W / 2, H * 0.55);
-    ctx.scale(z, z);
-    ctx.translate(-W / 2, -H * 0.55);
-    drawBackground(ctx, auto ? bgAt(scenes, t) : opts.style, GROUND_Y, t);
-    const g = groups.find((gr) => t >= gr[0].start && t <= gr[gr.length - 1].end + 0.35);
     let idx = -1;
     for (let j = 0; j < scenes.length; j++) {
       if (t >= scenes[j].start && t < scenes[j].end) { idx = j; break; }
     }
     const si = idx >= 0 ? idx : scenes.length - 1;
     const scene = scenes[si];
+    // ground surface tint (grass/sand/snow/…) fades in over the scene cut
+    // just like the background colors do
+    let groundTint = null;
+    if (scene && scene.ground) {
+      groundTint = { rgb: scene.ground, a: si > 0 ? clamp01((t - scene.start) / 1.2) : 1 };
+    }
+    // gentle camera drift (scene only — captions and titles stay fixed)
+    const z = 1 + 0.03 * Math.sin(t * 0.3 + 1);
+    ctx.save();
+    ctx.translate(W / 2, H * 0.55);
+    ctx.scale(z, z);
+    ctx.translate(-W / 2, -H * 0.55);
+    drawBackground(ctx, auto ? bgAt(scenes, t) : opts.style, GROUND_Y, t, groundTint);
+    const g = groups.find((gr) => t >= gr[0].start && t <= gr[gr.length - 1].end + 0.35);
     if (scene) {
       let pose = ACTIONS[scene.action](t - scene.start, scene.end - scene.start);
       // blend from the previous scene's end pose — no teleporting at cuts

@@ -1164,7 +1164,7 @@ function startVideoJob(text, voice, style, audioStyle = "", maxLen = 60) {
  *                           timeline slot; the Visual description picks the
  *                           action; the scene title shows as a card.
  */
-function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "", maxLen = 60) {
+function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "", maxLen = 60, anims = []) {
   const job = createJob("");
   const audioTune = audioStyle === "auto" ? null : AUDIO_STYLES[audioStyle];
   job.kind = "video";
@@ -1313,6 +1313,9 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
         style: VIDEO_STYLES[style],
         characterId,
         maxLen,
+        // AI-written keyframe animations (Zotomic's animation library) —
+        // matched per scene by keywords inside the renderer
+        anims: Array.isArray(anims) ? anims.filter((a) => a && typeof a === "object").slice(0, 8) : [],
         onProgress: (p) => { job.percent = Math.min(69, p); },
       });
 
@@ -1376,7 +1379,12 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
   return job;
 }
 
-app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "", audioStyle = "", maxLen: maxLenRaw } = req.body || {};
+app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "", audioStyle = "", maxLen: maxLenRaw, anims: animsRaw } = req.body || {};
+  // anims: AI-written keyframe animations from Zotomic's animation library
+  // (slug/keywords/loop/cycle/frames) — optional, capped, defensively validated
+  const anims = Array.isArray(animsRaw)
+    ? animsRaw.filter((a) => a && typeof a === "object" && Array.isArray(a.keywords) && Array.isArray(a.frames)).slice(0, 8)
+    : [];
   // maxLen: requested duration ceiling in seconds (Zotomic sends 900 for
   // admins = unlimited time; everyone else stays at the default 60s cap).
   const maxLen = Math.min(Math.max(Number(maxLenRaw) || 60, 10), 900);
@@ -1407,10 +1415,10 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
   let storyScenes = STICKMAN ? STICKMAN.parseStoryScript(trimmed) : [];
   if (storyScenes.length && !storyScenes.some((s) => s.voiceover || s.title)) storyScenes = [];
   if (storyScenes.length && characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes, audioStyle, maxLen).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes, audioStyle, maxLen, anims).id });
   }
   if (characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle, maxLen).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle, maxLen, anims).id });
   }
   res.json({ jobId: startVideoJob(trimmed, voice, style, audioStyle, maxLen).id });
 });

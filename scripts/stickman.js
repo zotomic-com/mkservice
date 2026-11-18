@@ -72,7 +72,9 @@ function mixPose(a, b, u) {
     o[k] = lerp(a[k] ?? dflt, b[k] ?? dflt, u);
   }
   for (const k of ["armL", "armR", "legL", "legR"]) {
-    o[k] = [lerp(a[k][0], b[k][0], u), lerp(a[k][1], b[k][1], u)];
+    // AI keyframe poses may omit joints — fall back to the standing pose
+    const A = a[k] ?? STAND[k], B = b[k] ?? STAND[k];
+    o[k] = [lerp(A[0], B[0], u), lerp(A[1], B[1], u)];
   }
   for (const k of ["mood", "prop", "fx", "holdIt", "seated", "away"]) o[k] = u > 0.5 ? b[k] : a[k];
   return o;
@@ -1315,24 +1317,33 @@ async function renderStickmanFrames(opts) {
   const ch = CHARACTERS.find((c) => c.id === opts.characterId) || CHARACTERS[0];
   const words = opts.words;
   const auto = !!opts.style.auto;
-  const scenes = (opts.scenes || buildScenes(words, Infinity)).map((s, i) => ({
+  const anims = (Array.isArray(opts.anims) ? opts.anims : []).filter(validAnimDef);
+  const scenes = (opts.scenes || buildScenes(words, Infinity)).map((s, i) => {
+    const sceneText = `${s.title || ""} ${s.visual || ""}`;
+    const animDef = anims.length ? matchCustomAnim(sceneText, anims) : null;
+    return {
     ...s,
     action: ACTIONS[s.action] ? s.action : "talk",
     // color words from the Colors line decide the background first (it's the
     // scene's actual color description); title/action keywords only fill in
     bg: auto ? pickAutoBg(`${s.colors || ""} || ${s.title || ""} ${s.action}`, i) : null,
     prop: matchProp(`${s.title || ""} ${s.visual || ""} ${s.colors || ""}`),
+    // AI-written keyframe animation matched by keywords against the scene text
+    animDef,
     // interaction DSL step 1: if the action holds an object at ANY point in
     // its animation (throw winds up holding, catch holds after the grab) AND
-    // the text mentions a carryable one, it's drawn in the hands
-    held: (ACTIONS[s.action] && [0, 0.12, 0.3, 0.5, 0.8].some((u) => {
+    // the text mentions a carryable one, it's drawn in the hands. Custom
+    // keyframe anims count too — a holdIt frame in the anim means held.
+    held: ((ACTIONS[s.action] && [0, 0.12, 0.3, 0.5, 0.8].some((u) => {
       const d = Math.max(0.5, s.end - s.start);
       return ACTIONS[s.action](u * d, d).holdIt;
-    })) ? matchHeld(`${s.title || ""} ${s.visual || ""}`) : "",
+    })) || (animDef && animDef.frames.some((f) => f.pose && f.pose.holdIt))) ?
+      matchHeld(sceneText) : "",
     // ground surface (grass/sand/snow/…) from the Colors line, fading in
     // over the first 1.2s of the scene like the background colors do
     ground: auto ? groundTintFor(`${s.colors || ""}`) : null,
-  }));
+  };
+  });
   const lastTime = Math.max(
     words.length ? words[words.length - 1].end : 0,
     scenes.length ? scenes[scenes.length - 1].end : 0,
@@ -1371,11 +1382,13 @@ async function renderStickmanFrames(opts) {
     drawBackground(ctx, auto ? bgAt(scenes, t) : opts.style, GROUND_Y, t, groundTint);
     const g = groups.find((gr) => t >= gr[0].start && t <= gr[gr.length - 1].end + 0.35);
     if (scene) {
-      let pose = ACTIONS[scene.action](t - scene.start, scene.end - scene.start);
+      // AI-written keyframe animation when matched; built-in action otherwise
+      const scenePose = (d, tt, dd) => (d.animDef ? animPose(d.animDef, tt, dd) : ACTIONS[d.action](tt, dd));
+      let pose = scenePose(scene, t - scene.start, scene.end - scene.start);
       // blend from the previous scene's end pose — no teleporting at cuts
       if (si > 0 && t - scene.start < 0.6) {
         const prev = scenes[si - 1];
-        const from = ACTIONS[prev.action](prev.end - prev.start, prev.end - prev.start);
+        const from = scenePose(prev, prev.end - prev.start, prev.end - prev.start);
         pose = mixPose(from, pose, (t - scene.start) / 0.6);
       }
       drawFigure(ctx, ch, pose, W / 2, GROUND_Y, t, !!g, scene.prop, scene.held);
@@ -1392,7 +1405,64 @@ async function renderStickmanFrames(opts) {
   return { framesDir, total, fps: FPS, duration };
 }
 
-/** Scene title card at the top of the frame — word-wrapped (up to 3 lines,
+/* ── AI-written keyframe animations (the library fallback) ──────────────── */
+
+/** Defensive shape check — the site validates thoroughly; we just refuse
+ * garbage so a bad anim can never break a render. */
+function validAnimDef(a) {
+  return (
+    a &&
+    Array.isArray(a.keywords) &&
+    a.keywords.length &&
+    Array.isArray(a.frames) &&
+    a.frames.length >= 2 &&
+    a.frames.every(
+      (f) => f && typeof f.u === "number" && Number.isFinite(f.u) && f.u >= 0 && f.u <= 1 && f.pose && typeof f.pose === "object",
+    )
+  );
+}
+
+/** Interpolate an AI-written keyframe animation at local time t (seconds).
+ * loop=true cycles the keyframes every `cycle` seconds; otherwise the pose
+ * plays once across the scene and holds the last keyframe. */
+function animPose(def, t, d) {
+  const frames = def.frames;
+  let u;
+  if (def.loop) {
+    const cycle = Math.max(0.4, Math.min(4, def.cycle || 1.5));
+    u = ((t % cycle) + cycle) % cycle / cycle;
+  } else {
+    u = clamp01(t / Math.max(0.4, d));
+  }
+  // find the bracketing keyframes
+  let a = frames[0];
+  let b = frames[frames.length - 1];
+  for (let i = 0; i < frames.length - 1; i++) {
+    if (u >= frames[i].u && u <= frames[i + 1].u) {
+      a = frames[i];
+      b = frames[i + 1];
+      break;
+    }
+  }
+  const span = b.u - a.u;
+  const local = span > 0 ? clamp01((u - a.u) / span) : 1;
+  return mixPose(a.pose, b.pose, local);
+}
+
+/** Match a custom anim to a scene by word-boundary keywords. */
+function matchCustomAnim(sceneText, anims) {
+  const t = String(sceneText).toLowerCase();
+  for (const a of anims || []) {
+    for (const k of a.keywords || []) {
+      const re = new RegExp(`\\b${String(k).toLowerCase().replace(/[^a-z0-9 ]/g, ".")}\\b`);
+      if (re.test(t)) return a;
+    }
+  }
+  return null;
+}
+
+/**
+ * Scene title card at the top of the frame — word-wrapped (up to 3 lines,
  * shrinking font) so long detail-line titles stay inside the frame. */
 function drawSceneTitle(ctx, title, u) {
   const alpha = Math.min(1, u / 0.2, (1 - u) / 0.25);

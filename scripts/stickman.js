@@ -74,7 +74,7 @@ function mixPose(a, b, u) {
   for (const k of ["armL", "armR", "legL", "legR"]) {
     o[k] = [lerp(a[k][0], b[k][0], u), lerp(a[k][1], b[k][1], u)];
   }
-  for (const k of ["mood", "prop", "fx", "holdIt"]) o[k] = u > 0.5 ? b[k] : a[k];
+  for (const k of ["mood", "prop", "fx", "holdIt", "seated"]) o[k] = u > 0.5 ? b[k] : a[k];
   return o;
 }
 
@@ -192,26 +192,31 @@ const ACTIONS = {
     };
   },
   sit(t) {
-    // seated profile: thighs forward, shins down (pairs with chair/couch props)
+    // seated profile: thighs forward, shins down (pairs with chair/couch props).
+    // SEAT_Y/SEAT_X in drawFigure drop the hips onto the actual seat surface —
+    // these leg angles plant the feet on the ground from that height.
     const b = Math.sin(t * 2) * 0.03;
     return {
       ...STAND,
       lean: 0.06 + b,
       armL: [-0.7, 0.1], armR: [0.7, -0.1],
-      legL: [1.25, -1.35], legR: [1.45, -1.5],
+      legL: [1.0, -1.1], legR: [1.2, -1.3],
       lift: -14,
+      seated: true,
       mood: "smile",
     };
   },
   lie(t) {
-    // asleep — flat on the back on the bed, gentle breathing
+    // asleep — flat on the back (on the bed when there is one), gentle breathing.
+    // rot -1.5 lays the body head-LEFT so the head rests on the bed's pillow.
     const z = Math.sin(t * 1.4) * 2;
     return {
       ...STAND,
-      rot: 1.5,
+      rot: -1.5,
       lift: 40 + z,
       armL: [-0.15, -0.1], armR: [0.15, 0.1],
       legL: [-0.06, 0.02], legR: [0.06, -0.02],
+      seated: true,
       mood: "sleep",
     };
   },
@@ -766,9 +771,9 @@ function drawProp(ctx, prop) {
     ctx.beginPath(); ctx.moveTo(-115, -2); ctx.quadraticCurveTo(-110, -94, -120, -152); ctx.stroke();
   } else if (prop === "couch") {
     ctx.fillStyle = "rgba(0,0,0,0.34)";
-    ctx.fillRect(-201, -85, 30, 97);   // back
-    ctx.fillRect(-201, -27, 150, 30);  // seat
-    ctx.fillRect(-71, -59, 18, 62);    // armrest
+    ctx.fillRect(-201, -165, 30, 95);  // back
+    ctx.fillRect(-201, -70, 150, 26);  // seat
+    ctx.fillRect(-71, -115, 18, 71);   // armrest
   } else if (prop === "box") {
     // gift box with a lid and ribbon (the classic "open the present" prop)
     ctx.fillStyle = "rgba(0,0,0,0.30)";
@@ -794,10 +799,10 @@ function drawProp(ctx, prop) {
     ctx.fillRect(110, -138, 11, 138);
   } else if (prop === "chair") {
     ctx.fillStyle = "rgba(0,0,0,0.30)";
-    ctx.fillRect(-138, -220, 14, 127); // back
-    ctx.fillRect(-115, -133, 130, 16); // seat (extends under the sitter)
-    ctx.fillRect(-110, -117, 11, 117); // legs
-    ctx.fillRect(-10, -117, 11, 117);
+    ctx.fillRect(-138, -160, 14, 90);  // back
+    ctx.fillRect(-115, -70, 130, 14);  // seat (extends under the sitter)
+    ctx.fillRect(-110, -56, 11, 56);   // legs
+    ctx.fillRect(-10, -56, 11, 56);
   } else if (prop === "car") {
     ctx.fillStyle = "rgba(0,0,0,0.26)";
     ctx.fillRect(-264, -78, 299, 58);  // body
@@ -822,9 +827,15 @@ function drawProp(ctx, prop) {
   }
 }
 
+/* Seat attach points (interaction DSL step 2): where the hips go for each
+ * prop you can sit/lie on. Values are local coords relative to the prop's
+ * ground anchor: y = seat/mattress surface height (negative = up), x = hip
+ * position along the seat. sit() plants the feet on the ground from SEAT_Y. */
+const SEAT_Y = { chair: -70, couch: -70, bed: -30 };
+const SEAT_X = { chair: -45, couch: -120, bed: -100 };
+
 /** Small object drawn AT the character's hands (local body coords, hip at
- * (0,0)) — same translucent style as the ground props. */
-function drawHeldObject(ctx, held, x, y) {
+ * (0,0)) — same translucent style as the ground props. */function drawHeldObject(ctx, held, x, y) {
   ctx.save();
   ctx.translate(x, y);
   if (held === "box") {
@@ -877,15 +888,30 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
   const s = 1.15;
   const sy = pose.sy || 1;
   const sx = pose.sx || 1;
-  const lift = (pose.lift || 0) + Math.sin(t * 2.2) * 1.6; // subtle breathing
-  const hipY = groundY - 82 * s * sy + lift;
+  const breathe = Math.sin(t * 2.2) * 1.6;
+  let lift = (pose.lift || 0) + breathe; // subtle breathing
+  let hipY = groundY - 82 * s * sy + lift;
+  let px = cx;
+  // seat attach (interaction DSL step 2): seated poses drop the hips onto
+  // the prop's actual seat surface (SEAT_Y/SEAT_X); without a visible seat
+  // they settle into a grounded "sitting" height.
+  if (pose.seated) {
+    const sp = pose.prop || extraProp;
+    if (SEAT_Y[sp] !== undefined) {
+      px = cx + SEAT_X[sp];
+      hipY = groundY + SEAT_Y[sp] + breathe;
+    } else {
+      // no visible seat: sitting = grounded bench height, lying = on the floor
+      hipY = groundY - (pose.rot ? 20 : 70) + breathe;
+    }
+  }
 
   // shadow shrinks/fades as the character lifts off
   ctx.save();
   ctx.globalAlpha = 0.25 * Math.max(0.2, 1 - Math.max(0, lift) / 110);
   ctx.fillStyle = "#000000";
   ctx.beginPath();
-  ctx.ellipse(cx, groundY + 10, 46 * s, 9, 0, 0, Math.PI * 2);
+  ctx.ellipse(px, groundY + 10, 46 * s, 9, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
@@ -922,7 +948,7 @@ function drawFigure(ctx, ch, pose, cx, groundY, t = 0, speaking = false, extraPr
   }
 
   ctx.save();
-  ctx.translate(cx, hipY);
+  ctx.translate(px, hipY);
   if (pose.rot) ctx.rotate(pose.rot);
   ctx.scale(s * sx, s * sy);
   ctx.lineCap = "round";

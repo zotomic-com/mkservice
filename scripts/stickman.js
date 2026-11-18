@@ -1126,7 +1126,9 @@ async function renderStickmanFrames(opts) {
     words.length ? words[words.length - 1].end : 0,
     scenes.length ? scenes[scenes.length - 1].end : 0,
   );
-  const duration = Math.min(Math.max(lastTime + 1.2, 2.5), 60); // hard cap 60s
+  // duration cap: default 60s, or the requested maxLen (hard ceiling 900s —
+  // Zotomic sends 900 for admins = unlimited video time)
+  const duration = Math.min(Math.max(lastTime + 1.2, 2.5), Math.min(opts.maxLen || 60, 900));
   const total = Math.ceil(duration * FPS);
   const groups = groupWords(words);
   const framesDir = opts.framesDir;

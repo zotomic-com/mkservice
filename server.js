@@ -540,8 +540,9 @@ app.post("/api/download", (req, res) => {
     return res.status(429).json({ error: "Server is busy right now — please try again in a moment." });
   }
 
-  // Light per-IP rate limit in public mode (20 downloads / hour)
-  if (MODE === "public") {
+  // Light per-IP rate limit in public mode (20 downloads / hour) —
+  // key-authed calls (the Zotomic site, incl. admins) are exempt.
+  if (MODE === "public" && !(API_KEY && req.headers["x-api-key"] === API_KEY)) {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
     const now = Date.now();
     const windowMs = 60 * 60 * 1000;
@@ -824,20 +825,23 @@ app.get("/api/tts/voices", async (req, res) => {
 });
 
 app.post("/api/tts", async (req, res) => {
-  const { text, voice = "en-US-GuyNeural" } = req.body || {};
+  const { text, voice = "en-US-GuyNeural", maxLen: maxLenRaw } = req.body || {};
+  // maxLen: Zotomic sends a truthy value for admins (unlimited) to lift the cap
+  const longForm = Boolean(Number(maxLenRaw));
 
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Please enter some text." });
   }
-  if (text.length > 3000) {
-    return res.status(400).json({ error: "Text is too long (max 3000 characters)." });
+  if (text.length > (longForm ? 12000 : 3000)) {
+    return res.status(400).json({ error: `Text is too long (max ${longForm ? 12000 : 3000} characters).` });
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) {
     return res.status(400).json({ error: "Invalid voice." });
   }
 
-  // Light rate limit in public mode (30 generations / hour per IP)
-  if (MODE === "public") {
+  // Light rate limit in public mode (30 generations / hour per IP) —
+  // key-authed calls (the Zotomic site, incl. admins) are exempt.
+  if (MODE === "public" && !(API_KEY && req.headers["x-api-key"] === API_KEY)) {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
     const now = Date.now();
     const hits = (rateHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
@@ -1038,7 +1042,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 ${events}`;
 }
 
-function startVideoJob(text, voice, style, audioStyle = "") {
+function startVideoJob(text, voice, style, audioStyle = "", maxLen = 60) {
   const job = createJob("");
   const audioTune = audioStyle === "auto"
     ? AUDIO_STYLES[pickAudioStyleId(text)] ?? AUDIO_STYLES.story
@@ -1100,7 +1104,7 @@ function startVideoJob(text, voice, style, audioStyle = "") {
         `gradients=s=540x960:speed=0.02:c0=${s.c0}:c1=${s.c1}`,
         "-vf", `fps=10,ass=${path.basename(ass)},format=yuv420p`,
         "-map", "1:v", "-map", "0:a",
-        "-shortest", "-t", "60",
+        "-shortest", "-t", String(maxLen),
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-threads", "2",
         "-x264-params", "rc-lookahead=0:bframes=0",
         "-filter_threads", "1",
@@ -1160,7 +1164,7 @@ function startVideoJob(text, voice, style, audioStyle = "") {
  *                           timeline slot; the Visual description picks the
  *                           action; the scene title shows as a card.
  */
-function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "") {
+function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle = "", maxLen = 60) {
   const job = createJob("");
   const audioTune = audioStyle === "auto" ? null : AUDIO_STYLES[audioStyle];
   job.kind = "video";
@@ -1260,7 +1264,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
           const narrLen = narrWords.length ? narrWords[narrWords.length - 1].end + 0.3 : 0;
           // narration lands at the storyboard time, but never before this slot
           const delay = Math.max(0, Math.min(sc.t0 - start, Math.max(0, sc.t1 - sc.t0 - narrLen)));
-          const end = Math.min(Math.max(sc.t1, start + delay + narrLen, start + 2), 60);
+          const end = Math.min(Math.max(sc.t1, start + delay + narrLen, start + 2), maxLen);
           const slotLen = end - start;
 
           if (narrWords.length) {
@@ -1308,6 +1312,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
         framesDir,
         style: VIDEO_STYLES[style],
         characterId,
+        maxLen,
         onProgress: (p) => { job.percent = Math.min(69, p); },
       });
 
@@ -1348,7 +1353,7 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
         killed = true;
         try { ff.kill("SIGKILL"); } catch {}
         fail("The video took too long to render. Try a shorter script.");
-      }, 15 * 60 * 1000);
+      }, Math.max(15, maxLen / 30) * 60 * 1000); // scales with the requested length (60s → 15 min, 900s → 30 min)
 
       ff.on("close", (code) => {
         clearTimeout(timer);
@@ -1371,12 +1376,15 @@ function startFigureJob(text, voice, style, characterId, storyScenes, audioStyle
   return job;
 }
 
-app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "", audioStyle = "" } = req.body || {};
+app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural", style = "ocean", character = "", audioStyle = "", maxLen: maxLenRaw } = req.body || {};
+  // maxLen: requested duration ceiling in seconds (Zotomic sends 900 for
+  // admins = unlimited time; everyone else stays at the default 60s cap).
+  const maxLen = Math.min(Math.max(Number(maxLenRaw) || 60, 10), 900);
   if (!text || typeof text !== "string" || text.trim().length < 10) {
     return res.status(400).json({ error: "Please enter a script (at least 10 characters)." });
   }
-  if (text.length > 5000) {
-    return res.status(400).json({ error: "Script is too long (5000 characters max — about 60 seconds of video)." });
+  if (text.length > (maxLen > 60 ? 20000 : 5000)) {
+    return res.status(400).json({ error: `Script is too long (${maxLen > 60 ? 20000 : 5000} characters max).` });
   }
   if (!/^[A-Za-z][A-Za-z-]{1,40}$/.test(voice)) return res.status(400).json({ error: "Invalid voice." });
   if (!VIDEO_STYLES[style]) return res.status(400).json({ error: "Invalid style." });
@@ -1399,12 +1407,12 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
   let storyScenes = STICKMAN ? STICKMAN.parseStoryScript(trimmed) : [];
   if (storyScenes.length && !storyScenes.some((s) => s.voiceover || s.title)) storyScenes = [];
   if (storyScenes.length && characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes, audioStyle).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, storyScenes, audioStyle, maxLen).id });
   }
   if (characterId) {
-    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle).id });
+    return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle, maxLen).id });
   }
-  res.json({ jobId: startVideoJob(trimmed, voice, style, audioStyle).id });
+  res.json({ jobId: startVideoJob(trimmed, voice, style, audioStyle, maxLen).id });
 });
 
 app.listen(PORT, () => {

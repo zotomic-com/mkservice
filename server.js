@@ -13,6 +13,7 @@
 
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -593,6 +594,9 @@ app.get("/api/file/:id", (req, res) => {
     // Downloader files are one-shot (privacy): delete right after transfer.
     if (MODE === "public" && job.kind !== "video") {
       try { fs.unlinkSync(job.filepath); } catch {}
+      if (job.kind === "convert") {
+        try { fs.rmSync(path.dirname(job.filepath), { recursive: true, force: true }); } catch {}
+      }
       jobs.delete(job.id);
     }
   });
@@ -1421,6 +1425,335 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
     return res.json({ jobId: startFigureJob(trimmed, voice, style, characterId, null, audioStyle, maxLen, anims).id });
   }
   res.json({ jobId: startVideoJob(trimmed, voice, style, audioStyle, maxLen).id });
+});
+
+/* ------------------------------------------------------------------ */
+/* API: Converter (images / video / audio)                            */
+/*                                                                    */
+/*   POST /api/convert?p=<exp>.<payloadB64>.<hmac>                     */
+/*   multipart/form-data, field "files" (1-30 files)                  */
+/*   payload = { t: slug, o: options, n: maxBytes, j: jobId }          */
+/*                                                                    */
+/* Zotomic signs the whole payload, so the browser cannot swap the     */
+/* converter type, options or size limit. Files are converted with     */
+/* ffmpeg / img2pdf / pdftoppm, served once from /api/file/:id, then   */
+/* deleted. Progress is reported through the normal /api/progress/:id. */
+/* ------------------------------------------------------------------ */
+
+const CONV_TYPES = new Set([
+  "images-to-pdf",
+  "pdf-to-images",
+  "video-to-video",
+  "video-to-audio",
+  "video-to-gif",
+  "video-trim",
+  "video-compress",
+  "audio-convert",
+  "audio-compress",
+  "audio-trim",
+]);
+
+const CONV_UPLOAD_DIR = path.join(os.tmpdir(), "own-downloader-uploads");
+try {
+  fs.mkdirSync(CONV_UPLOAD_DIR, { recursive: true });
+} catch {}
+
+const convUpload = multer({
+  dest: CONV_UPLOAD_DIR,
+  limits: { fileSize: 512 * 1024 * 1024, files: 30 },
+});
+
+/** `<exp>.<payloadB64>.<hmac>` — HMAC over `convert.<payloadB64>.<exp>`. */
+function readConvertTicket(p) {
+  if (!TICKET_SECRET || !p) return null;
+  const [expRaw, payloadB64, mac] = String(p).split(".");
+  const exp = Number(expRaw);
+  if (!exp || !payloadB64 || !mac || exp < Date.now()) return null;
+  const expected = crypto
+    .createHmac("sha256", TICKET_SECRET)
+    .update(`convert.${payloadB64}.${exp}`)
+    .digest("base64url");
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function runCmd(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { windowsHide: true, ...opts });
+    let stderr = "";
+    proc.stderr.on("data", (d) => {
+      stderr += d.toString();
+      if (stderr.length > 20000) stderr = stderr.slice(-20000);
+    });
+    proc.on("error", (e) => reject(new Error(`${cmd} is not available on this server (${e.code || e.message}).`)));
+    proc.on("close", (code) => {
+      if (code === 0) return resolve();
+      const tail = stderr.trim().split("\n").filter(Boolean).slice(-2).join(" ");
+      reject(new Error((tail || `${cmd} exited with code ${code}`).slice(0, 400)));
+    });
+  });
+}
+
+const runFfmpegConv = (args) => runCmd("ffmpeg", ["-hide_banner", "-y", ...args]);
+
+function parseClock(v) {
+  if (v === undefined || v === null || v === "") return null;
+  const parts = String(v).split(":").map((n) => Number(n));
+  if (!parts.length || parts.some((n) => !Number.isFinite(n) || n < 0)) return null;
+  let total = 0;
+  for (const n of parts) total = total * 60 + n;
+  return total;
+}
+
+function clampNum(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function safeBase(name) {
+  return String(name || "file")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .slice(0, 60) || "file";
+}
+
+const AUDIO_CODECS = {
+  mp3: "libmp3lame",
+  aac: "aac",
+  m4a: "aac",
+  ogg: "libvorbis",
+  wav: "pcm_s16le",
+  flac: "flac",
+};
+
+/** Run one conversion. Returns { filepath, filename }. */
+async function runConversion(type, opts, files, outDir) {
+  const first = files[0];
+  const base = safeBase(first.originalname);
+  const inPath = first.path;
+
+  switch (type) {
+    case "images-to-pdf": {
+      const out = path.join(outDir, `${base}.pdf`);
+      await runCmd("img2pdf", [...files.map((f) => f.path), "-o", out]);
+      return { filepath: out, filename: `${base}.pdf` };
+    }
+
+    case "pdf-to-images": {
+      const format = String(opts.format || "png");
+      const dpi = clampNum(opts.dpi, 72, 600, 150);
+      const flag = format === "jpg" || format === "jpeg" ? "-jpeg" : format === "tiff" ? "-tiff" : "-png";
+      const prefix = path.join(outDir, "page");
+      await runCmd("pdftoppm", ["-r", String(Math.round(dpi)), flag, inPath, prefix]);
+      const pages = fs
+        .readdirSync(outDir)
+        .filter((f) => f.startsWith("page"))
+        .sort()
+        .map((f) => path.join(outDir, f));
+      if (!pages.length) throw new Error("That PDF had no pages to render.");
+      if (pages.length === 1) {
+        const ext = path.extname(pages[0]);
+        const single = path.join(outDir, `${base}-page-1${ext}`);
+        fs.renameSync(pages[0], single);
+        return { filepath: single, filename: `${base}-page-1${ext}` };
+      }
+      const zipPath = path.join(outDir, `${base}-pages.zip`);
+      await runCmd("zip", ["-j", "-q", zipPath, ...pages]);
+      return { filepath: zipPath, filename: `${base}-pages.zip` };
+    }
+
+    case "video-to-video": {
+      const format = String(opts.format || "mp4");
+      const quality = String(opts.quality || "high");
+      const crf = { original: "18", high: "20", medium: "23", low: "28" }[quality] || "20";
+      const out = path.join(outDir, `${base}-converted.${format}`);
+      if (format === "webm") {
+        await runFfmpegConv(["-i", inPath, "-c:v", "libvpx-vp9", "-crf", "32", "-b:v", "0", "-c:a", "libopus", out]);
+      } else {
+        await runFfmpegConv([
+          "-i", inPath,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", crf,
+          "-c:a", "aac", "-b:a", "160k",
+          "-movflags", "+faststart",
+          out,
+        ]);
+      }
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "video-to-audio": {
+      const format = String(opts.format || "mp3");
+      const codec = AUDIO_CODECS[format] || "libmp3lame";
+      const out = path.join(outDir, `${base}.${format}`);
+      const args = ["-i", inPath, "-vn", "-c:a", codec];
+      if (!["wav", "flac"].includes(format)) args.push("-b:a", String(opts.bitrate || "192k"));
+      await runFfmpegConv([...args, out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "video-to-gif": {
+      const fps = clampNum(opts.fps, 1, 30, 10);
+      const width = clampNum(opts.scale, 100, 1920, 480);
+      const out = path.join(outDir, `${base}.gif`);
+      await runFfmpegConv([
+        "-i", inPath,
+        "-vf",
+        `fps=${fps},scale=${Math.round(width)}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
+        "-loop", "0",
+        out,
+      ]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "video-trim": {
+      const start = parseClock(opts.start) ?? 0;
+      const duration = parseClock(opts.duration);
+      const out = path.join(outDir, `${base}-trimmed.mp4`);
+      const args = ["-ss", String(start), "-i", inPath];
+      if (duration) args.push("-t", String(duration));
+      args.push("-c", "copy", "-avoid_negative_ts", "make_zero", out);
+      await runFfmpegConv(args);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "video-compress": {
+      const crf = clampNum(opts.crf, 18, 35, 28);
+      const preset = String(opts.preset || "medium").replace(/[^a-z]/g, "") || "medium";
+      const out = path.join(outDir, `${base}-compressed.mp4`);
+      await runFfmpegConv([
+        "-i", inPath,
+        "-c:v", "libx264", "-crf", String(Math.round(crf)), "-preset", preset,
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        out,
+      ]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "audio-convert": {
+      const format = String(opts.format || "mp3");
+      const codec = AUDIO_CODECS[format] || "libmp3lame";
+      const out = path.join(outDir, `${base}.${format}`);
+      const args = ["-i", inPath, "-vn", "-c:a", codec];
+      if (!["wav", "flac"].includes(format)) args.push("-b:a", String(opts.bitrate || "192k"));
+      await runFfmpegConv([...args, out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "audio-compress": {
+      const out = path.join(outDir, `${base}-compressed.mp3`);
+      await runFfmpegConv([
+        "-i", inPath, "-vn",
+        "-c:a", "libmp3lame", "-b:a", String(opts.bitrate || "128k"),
+        out,
+      ]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "audio-trim": {
+      const start = parseClock(opts.start) ?? 0;
+      const duration = parseClock(opts.duration);
+      const ext = path.extname(first.originalname).toLowerCase() || ".mp3";
+      const out = path.join(outDir, `${base}-trimmed${ext}`);
+      const args = ["-ss", String(start), "-i", inPath];
+      if (duration) args.push("-t", String(duration));
+      args.push("-c", "copy", out);
+      await runFfmpegConv(args);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    default:
+      throw new Error("Unknown converter type.");
+  }
+}
+
+app.post("/api/convert", convUpload.array("files", 30), (req, res) => {
+  const payload = readConvertTicket(req.query.p);
+  const keyed = API_KEY && req.headers["x-api-key"] === API_KEY;
+  if (!payload && !keyed) {
+    for (const f of req.files || []) {
+      try { fs.unlinkSync(f.path); } catch {}
+    }
+    return res.status(403).json({ error: "Invalid or expired upload ticket." });
+  }
+
+  const files = Array.isArray(req.files) ? req.files : [];
+  const cleanup = () => {
+    for (const f of files) {
+      try { fs.unlinkSync(f.path); } catch {}
+    }
+  };
+
+  if (!files.length) return res.status(400).json({ error: "No file was uploaded." });
+
+  const type = String(payload ? payload.t : (req.body && req.body.type) || "");
+  if (!CONV_TYPES.has(type)) {
+    cleanup();
+    return res.status(400).json({ error: "Unknown converter type." });
+  }
+
+  let opts = {};
+  if (payload && payload.o && typeof payload.o === "object") {
+    opts = payload.o;
+  } else if (req.body && typeof req.body.options === "string") {
+    try { opts = JSON.parse(req.body.options); } catch { opts = {}; }
+  }
+
+  const maxBytes = Number(payload && payload.n) || 512 * 1024 * 1024;
+  const total = files.reduce((sum, f) => sum + (f.size || 0), 0);
+  if (total > maxBytes) {
+    cleanup();
+    return res.status(413).json({ error: "That file is too large." });
+  }
+
+  const job = createJob("");
+  // The site chose the id so its progress/file tickets line up.
+  const wantedId = payload && typeof payload.j === "string" ? payload.j.replace(/[^a-f0-9]/gi, "").slice(0, 32) : "";
+  if (wantedId) {
+    jobs.delete(job.id);
+    job.id = wantedId;
+    jobs.set(job.id, job);
+  }
+  job.kind = "convert";
+  job.status = "converting";
+  job.percent = 10;
+  job.title = type;
+
+  res.json({ jobId: job.id });
+
+  const outDir = path.join(TEMP_DIR, `conv-${job.id}`);
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+  } catch {}
+
+  (async () => {
+    try {
+      job.percent = 25;
+      const out = await runConversion(type, opts, files, outDir);
+      job.filepath = out.filepath;
+      job.filename = out.filename;
+      job.status = "done";
+      job.percent = 100;
+      console.log(`[convert] ${type} done -> ${out.filename}`);
+    } catch (err) {
+      job.status = "error";
+      job.percent = 0;
+      job.error = String((err && err.message) || err).slice(0, 400);
+      console.error(`[convert] ${type} failed: ${job.error}`);
+      try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+    } finally {
+      cleanup();
+    }
+  })();
 });
 
 app.listen(PORT, () => {

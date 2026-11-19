@@ -6,14 +6,15 @@ FROM python:3.12-slim
 
 # git is needed to clone the PO-token provider; Node 22 required by it
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl ca-certificates git fonts-dejavu-core && \
+    ffmpeg curl ca-certificates git fonts-dejavu-core poppler-utils zip && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Download engine + text-to-speech + yt-dlp PO-token plugin (bgutil)
 # yt-dlp[default] includes the yt-dlp-ejs challenge solver scripts
-RUN pip install --no-cache-dir -U "yt-dlp[default]" edge-tts bgutil-ytdlp-pot-provider
+# img2pdf powers the Images → PDF converter
+RUN pip install --no-cache-dir -U "yt-dlp[default]" edge-tts bgutil-ytdlp-pot-provider img2pdf
 
 # bgutil provider HTTP server (started by server.js on 127.0.0.1:4416)
 RUN git clone --single-branch --depth 1 --branch 2.0.2 \

@@ -1676,7 +1676,26 @@ async function runConversion(type, opts, files, outDir) {
   }
 }
 
-app.post("/api/convert", convUpload.array("files", 30), (req, res) => {
+app.post(
+  "/api/convert",
+  (req, res, next) => {
+    convUpload.array("files", 30)(req, res, (err) => {
+      if (!err) return next();
+      for (const f of req.files || []) {
+        try { fs.unlinkSync(f.path); } catch {}
+      }
+      const tooBig = err.code === "LIMIT_FILE_SIZE";
+      const tooMany = err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE";
+      return res.status(tooBig ? 413 : 400).json({
+        error: tooBig
+          ? "That file is too large (512 MB max)."
+          : tooMany
+            ? "Too many files for one conversion (30 max)."
+            : "Upload failed — please try again.",
+      });
+    });
+  },
+  (req, res) => {
   const payload = readConvertTicket(req.query.p);
   const keyed = API_KEY && req.headers["x-api-key"] === API_KEY;
   if (!payload && !keyed) {

@@ -1511,8 +1511,11 @@ function runCmd(cmd, args, opts = {}) {
       if (stderr.length > 20000) stderr = stderr.slice(-20000);
     });
     proc.on("error", (e) => reject(new Error(`${cmd} is not available on this server (${e.code || e.message}).`)));
-    proc.on("close", (code) => {
+    proc.on("close", (code, signal) => {
       if (code === 0) return resolve();
+      if (signal === "SIGKILL" || signal === "SIGTERM") {
+        return reject(new Error(`${cmd} took too long and was stopped.`));
+      }
       if (/does not contain any stream/i.test(stderr)) {
         return reject(new Error("That file has no audio or video stream this converter can use."));
       }
@@ -1523,10 +1526,10 @@ function runCmd(cmd, args, opts = {}) {
 }
 
 /** Run one inline Python helper (rembg, Pillow, PyMuPDF, python-docx/pptx). */
-function runPython(script, args) {
+function runPython(script, args, opts = {}) {
   const file = path.join(os.tmpdir(), `conv-py-${crypto.randomBytes(4).toString("hex")}.py`);
   fs.writeFileSync(file, script, "utf8");
-  return runCmd("python", [file, ...args]).finally(() => {
+  return runCmd("python", [file, ...args], opts).finally(() => {
     try { fs.unlinkSync(file); } catch {}
   });
 }
@@ -1881,10 +1884,10 @@ from PIL import Image
 from rembg import remove, new_session
 
 img = Image.open(sys.argv[1])
-session = new_session("u2net")
+session = new_session("u2netp")
 result = remove(img, session=session)
 result.save(sys.argv[2])
-`, [inPath, out]);
+`, [inPath, out], { timeout: 240_000 });
       } catch (err) {
         const msg = String((err && err.message) || err);
         if (/No module named|ModuleNotFoundError|onnxruntime|rembg/i.test(msg)) {

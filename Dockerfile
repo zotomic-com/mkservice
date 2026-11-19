@@ -28,7 +28,9 @@ RUN pip install --no-cache-dir -U "yt-dlp[default]" edge-tts bgutil-ytdlp-pot-pr
 RUN pip install --no-cache-dir pillow pymupdf openpyxl python-pptx python-docx
 
 # AI background removal is optional (model download happens on first use).
-RUN pip install --no-cache-dir rembg onnxruntime || true
+# u2netp is the small model — the full u2net needs more RAM than the free tier.
+RUN (pip install --no-cache-dir rembg onnxruntime && \
+     python -c "from rembg import new_session; new_session('u2netp')") || true
 
 # bgutil provider HTTP server (started by server.js on 127.0.0.1:4416)
 RUN git clone --single-branch --depth 1 --branch 2.0.2 \

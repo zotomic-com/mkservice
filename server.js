@@ -266,6 +266,55 @@ function runYtDlp(args) {
   });
 }
 
+/* Download a pasted video link into a converter's working directory and
+ * return the produced file path. Used by the Video converters when the user
+ * pastes a link instead of uploading a file. */
+function downloadToDir(url, outDir, onPercent) {
+  return new Promise((resolve, reject) => {
+    const template = path.join(outDir, "%(title).80s.%(ext)s");
+    const args = [
+      "--newline", "--no-warnings", "--no-playlist", "--restrict-filenames", "--no-mtime",
+      "-o", template,
+      "--print", "after_move:filepath",
+      "--no-simulate",
+      "-f", "bv*+ba/b",
+      "--merge-output-format", "mp4",
+      "-S", "ext:mp4:m4a",
+      ...proxyArgs(),
+      ...cookiesArgs(),
+      url,
+    ];
+
+    const proc = spawnYtDlp(args);
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch {}
+    }, 10 * 60 * 1000);
+
+    proc.stdout.on("data", (c) => {
+      stdout += c.toString();
+      const m = /\[download\]\s+([\d.]+)%/.exec(c.toString());
+      if (m && onPercent) onPercent(parseFloat(m[1]));
+    });
+    proc.stderr.on("data", (c) => { stderr += c.toString(); });
+    proc.on("error", (err) => { clearTimeout(timer); reject(err); });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      const printed = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).pop();
+      if (code === 0 && printed && fs.existsSync(printed)) return resolve(printed);
+      // Fall back to the newest file in the working directory.
+      try {
+        const files = fs.readdirSync(outDir)
+          .map((f) => ({ f, t: fs.statSync(path.join(outDir, f)).mtimeMs }))
+          .sort((a, b) => b.t - a.t);
+        if (files[0]) return resolve(path.join(outDir, files[0].f));
+      } catch {}
+      reject(new Error(friendlyError(stderr || `yt-dlp exited with code ${code}`, url)));
+    });
+  });
+}
+
 function detectPlatform(url) {
   const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
   if (host.includes("youtu")) return "YouTube";
@@ -2054,8 +2103,6 @@ app.post(
     }
   };
 
-  if (!files.length) return res.status(400).json({ error: "No file was uploaded." });
-
   const type = String(payload ? payload.t : (req.body && req.body.type) || "");
   if (!CONV_TYPES.has(type)) {
     cleanup();
@@ -2067,6 +2114,20 @@ app.post(
     opts = payload.o;
   } else if (req.body && typeof req.body.options === "string") {
     try { opts = JSON.parse(req.body.options); } catch { opts = {}; }
+  }
+
+  // Video converters accept a pasted link instead of an upload. Only the
+  // supported video hosts are allowed, which also blocks SSRF attempts.
+  const rawUrl = typeof opts.url === "string" ? opts.url.trim() : "";
+  if (!files.length && !rawUrl) {
+    cleanup();
+    return res.status(400).json({ error: "No file was uploaded." });
+  }
+  if (rawUrl && !isAllowedUrl(rawUrl)) {
+    cleanup();
+    return res.status(400).json({
+      error: "That video link is not supported. Use a YouTube, TikTok, Instagram or Facebook link.",
+    });
   }
 
   const maxBytes = Number(payload && payload.n) || 512 * 1024 * 1024;
@@ -2098,6 +2159,22 @@ app.post(
 
   (async () => {
     try {
+      // A pasted link is fetched into the working directory first, then the
+      // normal converter pipeline runs against the downloaded file.
+      if (!files.length && rawUrl) {
+        job.status = "downloading";
+        job.percent = 2;
+        const downloaded = await downloadToDir(rawUrl, outDir, (pct) => {
+          job.percent = Math.max(2, Math.min(24, 2 + Math.round(pct * 0.22)));
+        });
+        files.push({
+          path: downloaded,
+          originalname: path.basename(downloaded),
+          size: fs.statSync(downloaded).size,
+        });
+        job.status = "converting";
+      }
+
       job.percent = 25;
       const out = await runConversion(type, opts, files, outDir);
       job.filepath = out.filepath;

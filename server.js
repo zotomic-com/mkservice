@@ -99,12 +99,19 @@ if (MODE === "local") {
   if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
   setInterval(() => {
     // Safety net: purge orphaned temp files. Generated videos stay
-    // downloadable for 24h; everything else for 1 hour.
+    // downloadable for 24h; everything else for 1 hour. Converter output
+    // lives in conv-<jobId> folders, so those are removed with their job.
     try {
       for (const f of fs.readdirSync(TEMP_DIR)) {
         const p = path.join(TEMP_DIR, f);
+        const st = fs.statSync(p);
         const maxAge = /-generated-video\.mp4$/.test(f) ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-        if (Date.now() - fs.statSync(p).mtimeMs > maxAge) {
+        if (Date.now() - st.mtimeMs <= maxAge) continue;
+        if (st.isDirectory()) {
+          fs.rmSync(p, { recursive: true, force: true });
+          const d = /^conv-([0-9a-f]{16})$/.exec(f);
+          if (d) jobs.delete(d[1]);
+        } else {
           fs.unlinkSync(p);
           const m = /^([0-9a-f]{16})-generated-video\.mp4$/.exec(f);
           if (m) jobs.delete(m[1]);
@@ -632,6 +639,16 @@ app.get("/api/file/:id", (req, res) => {
   if (!job) return res.status(404).json({ error: "Job not found." });
   if (job.status !== "done" || !job.filepath || !fs.existsSync(job.filepath)) {
     return res.status(404).json({ error: "File is no longer available." });
+  }
+
+  // Inline previews (<img>, <audio>, <video>) ask for ?preview=1. They must
+  // never consume the one-shot download, otherwise the Download button fails
+  // with "Job not found." right after the preview loads.
+  if (req.query.preview === "1") {
+    res.setHeader("Content-Disposition", "inline");
+    return res.sendFile(path.resolve(job.filepath), (err) => {
+      if (err && !res.headersSent) res.status(500).end();
+    });
   }
 
   const safeName = (job.filename || "video.mp4").replace(/[\\/:*?"<>|]/g, "_");

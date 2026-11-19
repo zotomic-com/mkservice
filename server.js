@@ -1581,6 +1581,16 @@ function safeBase(name) {
     .slice(0, 60) || "file";
 }
 
+/** u2netp ONNX model for Remove Background (pre-downloaded in the image). */
+const U2NETP_MODEL = process.env.U2NETP_MODEL || "/opt/models/u2netp.onnx";
+function u2netpModelPath() {
+  if (fs.existsSync(U2NETP_MODEL)) return U2NETP_MODEL;
+  // Local dev fallback: rembg's cache if it was ever used.
+  const local = path.join(os.homedir(), ".rembg", "models", "u2netp", "u2netp.onnx");
+  if (fs.existsSync(local)) return local;
+  return "";
+}
+
 const AUDIO_CODECS = {
   mp3: "libmp3lame",
   aac: "aac",
@@ -1878,20 +1888,48 @@ prs.save(sys.argv[2])
 
     case "remove-background": {
       const out = path.join(outDir, `${base}.png`);
+      const modelPath = u2netpModelPath();
+      if (!modelPath) {
+        throw new Error("Background removal is not available on this server right now.");
+      }
       try {
+        // Direct ONNX inference (no rembg) — rembg pulls scipy/skimage and
+        // needs more RAM than the free tier has. u2netp at 320×320 is tiny.
         await runPython(`
 import sys
+import numpy as np
 from PIL import Image
-from rembg import remove, new_session
+import onnxruntime as ort
 
-img = Image.open(sys.argv[1])
-session = new_session("u2netp")
-result = remove(img, session=session)
-result.save(sys.argv[2])
-`, [inPath, out], { timeout: 600_000 });
+model_path = sys.argv[3]
+src = Image.open(sys.argv[1])
+orig = src.convert("RGBA")
+rgb = src.convert("RGB")
+w, h = rgb.size
+
+sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+input_name = sess.get_inputs()[0].name
+
+im = rgb.resize((320, 320), Image.BILINEAR)
+arr = np.asarray(im, dtype=np.float32) / 255.0
+mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+arr = (arr - mean) / std
+arr = np.transpose(arr, (2, 0, 1))
+arr = np.expand_dims(arr, 0).astype(np.float32)
+
+out = sess.run(None, {input_name: arr})[0]
+mask = out[0, 0]
+lo, hi = float(mask.min()), float(mask.max())
+mask = (mask - lo) / (hi - lo + 1e-8)
+mask = (mask * 255).astype(np.uint8)
+mask_img = Image.fromarray(mask).resize((w, h), Image.LANCZOS)
+orig.putalpha(mask_img)
+orig.save(sys.argv[2])
+`, [inPath, out, modelPath], { timeout: 120_000 });
       } catch (err) {
         const msg = String((err && err.message) || err);
-        if (/No module named|ModuleNotFoundError|onnxruntime|rembg/i.test(msg)) {
+        if (/No module named|ModuleNotFoundError|onnxruntime|No such file/i.test(msg)) {
           throw new Error("Background removal is not available on this server right now.");
         }
         throw err;

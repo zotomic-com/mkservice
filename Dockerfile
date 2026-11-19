@@ -25,12 +25,14 @@ RUN apt-get update && \
 RUN pip install --no-cache-dir -U "yt-dlp[default]" edge-tts bgutil-ytdlp-pot-provider img2pdf
 
 # Document + image helpers used by the extra converter sub-services.
-RUN pip install --no-cache-dir pillow pymupdf openpyxl python-pptx python-docx
+RUN pip install --no-cache-dir pillow pymupdf openpyxl python-pptx python-docx onnxruntime numpy
 
-# AI background removal is optional (model download happens on first use).
-# u2netp is the small model — the full u2net needs more RAM than the free tier.
-RUN (pip install --no-cache-dir rembg onnxruntime && \
-     python -c "from rembg import new_session; new_session('u2netp')") || true
+# Remove Background runs u2netp directly through ONNX Runtime (rembg pulls
+# scipy/skimage and needs more RAM than small instances have). Pre-download
+# the 4.6 MB model so the first request is fast.
+RUN mkdir -p /opt/models && \
+    (curl -fsSL -o /opt/models/u2netp.onnx \
+      https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx || true)
 
 # bgutil provider HTTP server (started by server.js on 127.0.0.1:4416)
 RUN git clone --single-branch --depth 1 --branch 2.0.2 \

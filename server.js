@@ -1888,7 +1888,7 @@ img = Image.open(sys.argv[1])
 session = new_session("u2netp")
 result = remove(img, session=session)
 result.save(sys.argv[2])
-`, [inPath, out], { timeout: 240_000 });
+`, [inPath, out], { timeout: 600_000 });
       } catch (err) {
         const msg = String((err && err.message) || err);
         if (/No module named|ModuleNotFoundError|onnxruntime|rembg/i.test(msg)) {

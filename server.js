@@ -1869,9 +1869,10 @@ prs.save(sys.argv[2])
     case "video-to-text":
     case "video-to-skill": {
       await requireAudioStream(inPath, "That video has no audio track — nothing to transcribe.");
-      // Small mono mp3 the site can pull and hand to Gemini (≤ ~2.8 h at 16 kbps).
+      // Small mono mp3 the site can pull and hand to Gemini. 32 kbps keeps
+      // speech clear; the site caps the pull at 14 MB (~1 hour of audio).
       const out = path.join(outDir, `${base}-audio.mp3`);
-      await runFfmpegConv(["-i", inPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "16k", out]);
+      await runFfmpegConv(["-i", inPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", out]);
       return { filepath: out, filename: path.basename(out) };
     }
 

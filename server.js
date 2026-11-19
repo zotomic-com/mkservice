@@ -829,9 +829,13 @@ app.get("/api/tts/voices", async (req, res) => {
 });
 
 app.post("/api/tts", async (req, res) => {
-  const { text, voice = "en-US-GuyNeural", maxLen: maxLenRaw } = req.body || {};
+  const { text, voice = "en-US-GuyNeural", maxLen: maxLenRaw, rate: rateRaw, volume: volumeRaw } = req.body || {};
   // maxLen: Zotomic sends a truthy value for admins (unlimited) to lift the cap
   const longForm = Boolean(Number(maxLenRaw));
+  // Rate / volume are edge-tts percentages, e.g. "+25%", "-50%", "0%".
+  const pct = (v, fallback) => (/^[+-]?\d{1,3}%$/.test(String(v ?? "")) ? String(v) : fallback);
+  const rate = pct(rateRaw, "0%");
+  const volume = pct(volumeRaw, "0%");
 
   if (!text || typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Please enter some text." });
@@ -865,9 +869,11 @@ app.post("/api/tts", async (req, res) => {
     await new Promise((resolve, reject) => {
       const proc = spawn("python", [
         "-m", "edge_tts",
-        "--voice", voice,
-        "--text", text,
-        "--write-media", tmpFile,
+        `--voice=${voice}`,
+        `--rate=${rate}`,
+        `--volume=${volume}`,
+        `--text=${text}`,
+        `--write-media=${tmpFile}`,
       ], { windowsHide: true });
 
       let stderr = "";
@@ -1443,14 +1449,25 @@ app.post("/api/video", (req, res) => {  const { text, voice = "en-US-GuyNeural",
 const CONV_TYPES = new Set([
   "images-to-pdf",
   "pdf-to-images",
+  "docs-to-pdf",
+  "pdf-to-docx",
+  "pdf-to-xlsx",
+  "pdf-to-pptx",
+  "pdf-to-txt",
   "video-to-video",
   "video-to-audio",
   "video-to-gif",
   "video-trim",
   "video-compress",
+  "video-to-text",
+  "video-to-skill",
   "audio-convert",
   "audio-compress",
   "audio-trim",
+  "remove-background",
+  "add-background",
+  "add-overlay",
+  "add-text",
 ]);
 
 const CONV_UPLOAD_DIR = path.join(os.tmpdir(), "own-downloader-uploads");
@@ -1502,6 +1519,15 @@ function runCmd(cmd, args, opts = {}) {
       const tail = stderr.trim().split("\n").filter(Boolean).slice(-2).join(" ");
       reject(new Error((tail || `${cmd} exited with code ${code}`).slice(0, 400)));
     });
+  });
+}
+
+/** Run one inline Python helper (rembg, Pillow, PyMuPDF, python-docx/pptx). */
+function runPython(script, args) {
+  const file = path.join(os.tmpdir(), `conv-py-${crypto.randomBytes(4).toString("hex")}.py`);
+  fs.writeFileSync(file, script, "utf8");
+  return runCmd("python", [file, ...args]).finally(() => {
+    try { fs.unlinkSync(file); } catch {}
   });
 }
 
@@ -1595,6 +1621,138 @@ async function runConversion(type, opts, files, outDir) {
       const zipPath = path.join(outDir, `${base}-pages.zip`);
       await runCmd("zip", ["-j", "-q", zipPath, ...pages]);
       return { filepath: zipPath, filename: `${base}-pages.zip` };
+    }
+
+    case "docs-to-pdf": {
+      const outs = [];
+      for (const f of files) {
+        const ext = path.extname(f.originalname).toLowerCase();
+        const stem = safeBase(f.originalname);
+        if (ext === ".pdf") {
+          const copy = path.join(outDir, `${stem}.pdf`);
+          fs.copyFileSync(f.path, copy);
+          outs.push(copy);
+          continue;
+        }
+        const before = new Set(fs.readdirSync(outDir));
+        // A per-run LibreOffice profile avoids first-run/profile-lock failures.
+        const profile = path.join(os.tmpdir(), `lo-${crypto.randomBytes(4).toString("hex")}`);
+        await runCmd("soffice", [
+          `-env:UserInstallation=file://${profile}`,
+          "--headless",
+          "--convert-to",
+          "pdf",
+          "--outdir",
+          outDir,
+          f.path,
+        ]);
+        const produced = fs
+          .readdirSync(outDir)
+          .filter((n) => !before.has(n) && n.toLowerCase().endsWith(".pdf"))
+          .map((n) => path.join(outDir, n));
+        if (!produced.length) {
+          throw new Error(`Could not convert “${f.originalname}” — is it password-protected or corrupted?`);
+        }
+        outs.push(produced[0]);
+      }
+      if (outs.length === 1) return { filepath: outs[0], filename: `${base}.pdf` };
+      const zipPath = path.join(outDir, `${base}-pdfs.zip`);
+      await runCmd("zip", ["-j", "-q", zipPath, ...outs]);
+      return { filepath: zipPath, filename: `${base}-pdfs.zip` };
+    }
+
+    case "pdf-to-docx": {
+      const out = path.join(outDir, `${base}.docx`);
+      await runPython(`
+import sys
+import pymupdf
+from docx import Document
+from docx.shared import Pt
+
+doc = pymupdf.open(sys.argv[1])
+out = Document()
+for pno, page in enumerate(doc):
+    if pno:
+        out.add_page_break()
+    blocks = page.get_text("dict").get("blocks", [])
+    for b in blocks:
+        if b.get("type") != 0:
+            continue
+        for line in b.get("lines", []):
+            spans = line.get("spans", [])
+            text = "".join(s.get("text", "") for s in spans).strip()
+            if not text:
+                continue
+            sizes = [s.get("size", 0) for s in spans if s.get("text", "").strip()]
+            size = max(sizes) if sizes else 11
+            run = out.add_paragraph().add_run(text)
+            run.font.size = Pt(min(36, max(8, float(size))))
+            if spans and all("Bold" in (s.get("font", "") or "") for s in spans):
+                run.bold = True
+out.save(sys.argv[2])
+`, [inPath, out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "pdf-to-xlsx": {
+      const out = path.join(outDir, `${base}.xlsx`);
+      await runPython(`
+import sys
+import pymupdf
+import openpyxl
+
+doc = pymupdf.open(sys.argv[1])
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.title = "Tables"
+found = False
+for page in doc:
+    finder = page.find_tables()
+    for table in finder.tables:
+        found = True
+        ws.append([])
+        for row in table.extract():
+            ws.append(["" if c is None else str(c) for c in row])
+if not found:
+    for page in doc:
+        for line in page.get_text().splitlines():
+            ws.append([line])
+wb.save(sys.argv[2])
+`, [inPath, out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "pdf-to-pptx": {
+      const prefix = path.join(outDir, "slide");
+      await runCmd("pdftoppm", ["-png", "-r", "150", inPath, prefix]);
+      const out = path.join(outDir, `${base}.pptx`);
+      await runPython(`
+import sys, os, glob, re
+from pptx import Presentation
+from pptx.util import Inches
+
+def page_no(p):
+    m = re.search(r"(\\d+)\\.png$", p)
+    return int(m.group(1)) if m else 0
+
+images = sorted(glob.glob(os.path.join(sys.argv[1], "slide*.png")), key=page_no)
+if not images:
+    raise SystemExit("That PDF had no pages to render.")
+prs = Presentation()
+prs.slide_width = Inches(10)
+prs.slide_height = Inches(7.5)
+for img in images:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_picture(img, 0, 0, width=prs.slide_width, height=prs.slide_height)
+prs.save(sys.argv[2])
+`, [outDir, out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "pdf-to-txt": {
+      const out = path.join(outDir, `${base}.txt`);
+      await runCmd("pdftotext", ["-layout", inPath, out]);
+      return { filepath: out, filename: path.basename(out) };
     }
 
     case "video-to-video": {
@@ -1702,6 +1860,114 @@ async function runConversion(type, opts, files, outDir) {
       if (duration) args.push("-t", String(duration));
       args.push("-c", "copy", out);
       await runFfmpegConv(args);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "video-to-text":
+    case "video-to-skill": {
+      await requireAudioStream(inPath, "That video has no audio track — nothing to transcribe.");
+      // Small mono mp3 the site can pull and hand to Gemini (≤ ~2.8 h at 16 kbps).
+      const out = path.join(outDir, `${base}-audio.mp3`);
+      await runFfmpegConv(["-i", inPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "16k", out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "remove-background": {
+      const out = path.join(outDir, `${base}.png`);
+      try {
+        await runPython(`
+import sys
+from PIL import Image
+from rembg import remove, new_session
+
+img = Image.open(sys.argv[1])
+session = new_session("u2net")
+result = remove(img, session=session)
+result.save(sys.argv[2])
+`, [inPath, out]);
+      } catch (err) {
+        const msg = String((err && err.message) || err);
+        if (/No module named|ModuleNotFoundError|onnxruntime|rembg/i.test(msg)) {
+          throw new Error("Background removal is not available on this server right now.");
+        }
+        throw err;
+      }
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "add-background": {
+      const background = String(opts.background || "#ffffff");
+      const bgPath = files[1] ? files[1].path : "";
+      if (!background.startsWith("#") && !bgPath) {
+        throw new Error("Choose a hex colour (like #ffffff) or add a second image as the background.");
+      }
+      const out = path.join(outDir, `${base}-background.png`);
+      await runPython(`
+import sys
+from PIL import Image
+
+fg = Image.open(sys.argv[1]).convert("RGBA")
+if sys.argv[3].startswith("#"):
+    bg = Image.new("RGBA", fg.size, sys.argv[3])
+else:
+    bg = Image.open(sys.argv[4]).convert("RGBA").resize(fg.size, Image.LANCZOS)
+result = Image.alpha_composite(bg, fg)
+result.save(sys.argv[2])
+`, [inPath, out, background, bgPath]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "add-overlay": {
+      if (files.length < 2) throw new Error("Add Overlay needs a base image plus a second image to paste on top.");
+      const x = Math.round(clampNum(opts.x, 0, 20000, 0));
+      const y = Math.round(clampNum(opts.y, 0, 20000, 0));
+      const scale = clampNum(opts.scale, 0.1, 5, 1);
+      const out = path.join(outDir, `${base}-overlay.png`);
+      await runPython(`
+import sys
+from PIL import Image
+
+base = Image.open(sys.argv[1]).convert("RGBA")
+overlay = Image.open(sys.argv[2]).convert("RGBA")
+scale = float(sys.argv[5])
+new_size = (max(1, int(overlay.width * scale)), max(1, int(overlay.height * scale)))
+overlay = overlay.resize(new_size, Image.LANCZOS)
+base.paste(overlay, (int(sys.argv[3]), int(sys.argv[4])), overlay)
+base.save(sys.argv[6])
+`, [inPath, files[1].path, String(x), String(y), String(scale), out]);
+      return { filepath: out, filename: path.basename(out) };
+    }
+
+    case "add-text": {
+      const text = String(opts.text || "");
+      if (!text.trim()) throw new Error("Enter the text you want to draw on the image.");
+      const x = Math.round(clampNum(opts.x, 0, 20000, 50));
+      const y = Math.round(clampNum(opts.y, 0, 20000, 50));
+      const fontSize = Math.round(clampNum(opts.fontSize, 8, 400, 48));
+      const color = String(opts.color || "#ffffff");
+      if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error("Colour must be a hex value like #ffffff.");
+      const out = path.join(outDir, `${base}-text.png`);
+      await runPython(`
+import sys
+from PIL import Image, ImageDraw, ImageFont
+
+base = Image.open(sys.argv[1]).convert("RGBA")
+draw = ImageDraw.Draw(base)
+font = None
+for path in (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+):
+    try:
+        font = ImageFont.truetype(path, int(sys.argv[5]))
+        break
+    except Exception:
+        pass
+if font is None:
+    font = ImageFont.load_default()
+draw.text((int(sys.argv[3]), int(sys.argv[4])), sys.argv[2], font=font, fill=sys.argv[6])
+base.save(sys.argv[7])
+`, [inPath, text, String(x), String(y), String(fontSize), color, out]);
       return { filepath: out, filename: path.basename(out) };
     }
 

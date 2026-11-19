@@ -1496,11 +1496,37 @@ function runCmd(cmd, args, opts = {}) {
     proc.on("error", (e) => reject(new Error(`${cmd} is not available on this server (${e.code || e.message}).`)));
     proc.on("close", (code) => {
       if (code === 0) return resolve();
+      if (/does not contain any stream/i.test(stderr)) {
+        return reject(new Error("That file has no audio or video stream this converter can use."));
+      }
       const tail = stderr.trim().split("\n").filter(Boolean).slice(-2).join(" ");
       reject(new Error((tail || `${cmd} exited with code ${code}`).slice(0, 400)));
     });
   });
 }
+
+/** Which stream types a media file actually contains ("video", "audio"). */
+function probeStreams(file) {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "ffprobe",
+      ["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", file],
+      { windowsHide: true },
+    );
+    let out = "";
+    proc.stdout.on("data", (d) => (out += d.toString()));
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)));
+  });
+}
+
+async function requireStream(file, kind, message) {
+  const streams = await probeStreams(file);
+  if (streams && !streams.includes(kind)) throw new Error(message);
+}
+
+const requireAudioStream = (file, message) => requireStream(file, "audio", message);
+const requireVideoStream = (file, message) => requireStream(file, "video", message);
 
 const runFfmpegConv = (args) => runCmd("ffmpeg", ["-hide_banner", "-y", ...args]);
 
@@ -1572,6 +1598,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "video-to-video": {
+      await requireVideoStream(inPath, "That file has no video track to convert.");
       const format = String(opts.format || "mp4");
       const quality = String(opts.quality || "high");
       const crf = { original: "18", high: "20", medium: "23", low: "28" }[quality] || "20";
@@ -1591,6 +1618,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "video-to-audio": {
+      await requireAudioStream(inPath, "That video has no audio track — nothing to extract.");
       const format = String(opts.format || "mp3");
       const codec = AUDIO_CODECS[format] || "libmp3lame";
       const out = path.join(outDir, `${base}.${format}`);
@@ -1601,6 +1629,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "video-to-gif": {
+      await requireVideoStream(inPath, "That file has no video track to turn into a GIF.");
       const fps = clampNum(opts.fps, 1, 30, 10);
       const width = clampNum(opts.scale, 100, 1920, 480);
       const out = path.join(outDir, `${base}.gif`);
@@ -1615,6 +1644,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "video-trim": {
+      await requireVideoStream(inPath, "That file has no video track to trim.");
       const start = parseClock(opts.start) ?? 0;
       const duration = parseClock(opts.duration);
       const out = path.join(outDir, `${base}-trimmed.mp4`);
@@ -1626,6 +1656,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "video-compress": {
+      await requireVideoStream(inPath, "That file has no video track to compress.");
       const crf = clampNum(opts.crf, 18, 35, 28);
       const preset = String(opts.preset || "medium").replace(/[^a-z]/g, "") || "medium";
       const out = path.join(outDir, `${base}-compressed.mp4`);
@@ -1640,6 +1671,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "audio-convert": {
+      await requireAudioStream(inPath, "That file has no audio track to convert.");
       const format = String(opts.format || "mp3");
       const codec = AUDIO_CODECS[format] || "libmp3lame";
       const out = path.join(outDir, `${base}.${format}`);
@@ -1650,6 +1682,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "audio-compress": {
+      await requireAudioStream(inPath, "That file has no audio track to compress.");
       const out = path.join(outDir, `${base}-compressed.mp3`);
       await runFfmpegConv([
         "-i", inPath, "-vn",
@@ -1660,6 +1693,7 @@ async function runConversion(type, opts, files, outDir) {
     }
 
     case "audio-trim": {
+      await requireAudioStream(inPath, "That file has no audio track to trim.");
       const start = parseClock(opts.start) ?? 0;
       const duration = parseClock(opts.duration);
       const ext = path.extname(first.originalname).toLowerCase() || ".mp3";
